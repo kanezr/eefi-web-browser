@@ -1,10 +1,10 @@
 {
   "$schema": "../gen/schemas/remote-schema.json",
   "identifier": "remote-pages",
-  "description": "Allow remote pages to toggle their own DevTools or request the browser's find bar.",
+  "description": "Allow remote pages to toggle their own DevTools or print themselves.",
   "windows": ["main", "private-*", "window-*"],
   "remote": {
     "urls": ["http://*", "https://*"]
   },
-  "permissions": ["allow-toggle-page-devtools", "allow-open-find-bar"]
+  "permissions": ["allow-toggle-page-devtools", "allow-open-page-print-dialog", "allow-open-find-bar"]
 }

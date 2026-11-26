@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Browser chrome capability set",
   "windows": ["main", "private-*", "window-*"],
-  "permissions": ["core:default", "browser-ui"]
+  "permissions": ["core:default", "browser-ui", "dialog:allow-save"]
 }

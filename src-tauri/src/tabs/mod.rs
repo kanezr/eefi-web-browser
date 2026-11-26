@@ -47,6 +47,17 @@ document.addEventListener('keydown', event => {
       .catch(error => console.error('Eefi Browser: could not open find-in-page.', error));
     return;
   }
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'p' && !event.repeat) {
+    event.preventDefault();
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.invoke !== 'function') {
+      console.error('Eefi Browser: print shortcut is unavailable in this frame.');
+      return;
+    }
+    internals.invoke('open_page_print_dialog')
+      .catch(error => console.error('Eefi Browser: could not open print dialog.', error));
+    return;
+  }
   if (event.key !== 'F12' || event.repeat) return;
   event.preventDefault();
   const internals = window.__TAURI_INTERNALS__;
@@ -1568,6 +1579,201 @@ pub fn toggle_devtools(
 }
 
 #[tauri::command]
+pub async fn open_page_print_dialog(webview: Webview<Wry>) -> Result<(), String> {
+    if !is_page_webview_label(webview.label()) {
+        return Err("printing from page content is only allowed for a page webview".to_string());
+    }
+    show_print_ui(webview).await
+}
+
+#[tauri::command]
+pub async fn print_page(
+    app: AppHandle,
+    webview: Webview<Wry>,
+    normal_state: State<'_, BrowserState>,
+    window_states: State<'_, BrowserWindowStates>,
+) -> Result<(), String> {
+    if is_page_webview_label(webview.label()) {
+        return Err("print can only be started from browser chrome".to_string());
+    }
+    let state = state_for_window(
+        webview.window().label(),
+        normal_state.inner(),
+        window_states.inner(),
+    )?;
+    let tab_id = state
+        .0
+        .lock()
+        .map_err(|_| "browser tab state lock is poisoned".to_string())?
+        .active_tab_id
+        .clone()
+        .ok_or_else(|| "there is no active tab to print".to_string())?;
+    let page = get_awake_tab_view(&app, &tab_id, &state)?;
+    show_print_ui(page).await
+}
+
+#[tauri::command]
+pub async fn save_page_as_pdf(
+    app: AppHandle,
+    webview: Webview<Wry>,
+    tab_id: String,
+    file_path: String,
+    normal_state: State<'_, BrowserState>,
+    window_states: State<'_, BrowserWindowStates>,
+) -> Result<String, String> {
+    if is_page_webview_label(webview.label()) {
+        return Err("saving a PDF can only be started from browser chrome".to_string());
+    }
+    let state = state_for_window(
+        webview.window().label(),
+        normal_state.inner(),
+        window_states.inner(),
+    )?;
+    let page = get_awake_tab_view(&app, &tab_id, &state)?;
+    let pdf_path = validate_pdf_output_path(&file_path)?;
+    let path_text = pdf_path
+        .to_str()
+        .ok_or_else(|| "the selected PDF path is not a valid Windows path".to_string())?
+        .to_string();
+
+    #[cfg(windows)]
+    {
+        use std::{sync::mpsc, time::Duration};
+
+        use webview2_com::{
+            Microsoft::Web::WebView2::Win32::{ICoreWebView2Environment6, ICoreWebView2_7},
+            PrintToPdfCompletedHandler,
+        };
+        use windows::core::{Interface, HSTRING};
+
+        let output_path = HSTRING::from(path_text.clone());
+        let (setup_sender, setup_receiver) = mpsc::sync_channel(1);
+        let (completion_sender, completion_receiver) = mpsc::sync_channel(1);
+        let callback_sender = completion_sender.clone();
+        page.with_webview(move |platform| {
+            let setup_result = (|| -> Result<(), String> {
+                unsafe {
+                    let core = platform
+                        .controller()
+                        .CoreWebView2()
+                        .map_err(|error| format!("could not access WebView2: {error}"))?;
+                    let environment = platform
+                        .environment()
+                        .cast::<ICoreWebView2Environment6>()
+                        .map_err(|error| {
+                            format!("Save as PDF requires a newer WebView2 Runtime: {error}")
+                        })?;
+                    let settings = environment
+                        .CreatePrintSettings()
+                        .map_err(|error| format!("could not create PDF print settings: {error}"))?;
+                    settings
+                        .SetShouldPrintBackgrounds(true)
+                        .map_err(|error| format!("could not set PDF print settings: {error}"))?;
+                    let handler =
+                        PrintToPdfCompletedHandler::create(Box::new(move |result, succeeded| {
+                            let result = result
+                                .map_err(|error| {
+                                    format!("WebView2 could not save the PDF: {error}")
+                                })
+                                .and_then(|()| {
+                                    if succeeded {
+                                        Ok(())
+                                    } else {
+                                        Err("WebView2 did not finish saving the PDF.".to_string())
+                                    }
+                                });
+                            let _ = callback_sender.send(result);
+                            Ok(())
+                        }));
+                    core.cast::<ICoreWebView2_7>()
+                        .map_err(|error| {
+                            format!("Save as PDF requires a newer WebView2 Runtime: {error}")
+                        })?
+                        .PrintToPdf(&output_path, &settings, &handler)
+                        .map_err(|error| format!("could not start saving the PDF: {error}"))?;
+                }
+                Ok(())
+            })();
+            let _ = setup_sender.send(setup_result);
+        })
+        .map_err(|error| format!("could not access browser webview: {error}"))?;
+
+        tauri::async_runtime::spawn_blocking(move || {
+            setup_receiver
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|error| format!("timed out starting PDF export: {error}"))?
+        })
+        .await
+        .map_err(|error| format!("PDF setup worker failed: {error}"))??;
+
+        tauri::async_runtime::spawn_blocking(move || {
+            completion_receiver
+                .recv_timeout(Duration::from_secs(120))
+                .map_err(|error| format!("timed out waiting for PDF export: {error}"))?
+        })
+        .await
+        .map_err(|error| format!("PDF export worker failed: {error}"))??;
+
+        Ok(path_text)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (page, path_text);
+        Err("Save as PDF is only supported on Windows WebView2.".to_string())
+    }
+}
+
+async fn show_print_ui(page: Webview<Wry>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::{sync::mpsc, time::Duration};
+
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2_16, COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER,
+        };
+        use windows::core::Interface;
+
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let callback_sender = sender.clone();
+        page.with_webview(move |platform| {
+            let result = unsafe {
+                platform
+                    .controller()
+                    .CoreWebView2()
+                    .map_err(|error| format!("could not access WebView2: {error}"))
+                    .and_then(|core| {
+                        core.cast::<ICoreWebView2_16>()
+                            .map_err(|error| {
+                                format!("printing requires a newer WebView2 Runtime: {error}")
+                            })?
+                            .ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER)
+                            .map_err(|error| format!("could not open print dialog: {error}"))
+                    })
+            };
+            let _ = callback_sender.send(result);
+        })
+        .map_err(|error| format!("could not access browser webview: {error}"))?;
+
+        tauri::async_runtime::spawn_blocking(move || {
+            receiver
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|error| format!("timed out opening print dialog: {error}"))?
+        })
+        .await
+        .map_err(|error| format!("print dialog worker failed: {error}"))??;
+
+        Ok(())
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = page;
+        Err("Printing is only supported on Windows WebView2.".to_string())
+    }
+}
+
+#[tauri::command]
 pub async fn restore_session(
     app: AppHandle,
     webview: Webview<Wry>,
@@ -2386,6 +2592,57 @@ fn get_tab_view(
         .ok_or_else(|| "tab webview does not exist".to_string())
 }
 
+fn get_awake_tab_view(
+    app: &AppHandle,
+    tab_id: &str,
+    state: &BrowserState,
+) -> Result<tauri::Webview<Wry>, String> {
+    validate_tab_id(tab_id)?;
+    let sleeping = state
+        .0
+        .lock()
+        .map_err(|_| "browser tab state lock is poisoned".to_string())?
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tab_id)
+        .ok_or_else(|| "tab does not exist".to_string())?
+        .sleeping;
+    if sleeping {
+        return Err("wake the sleeping tab before printing it".to_string());
+    }
+    get_tab_view(app, tab_id, state)
+}
+
+fn validate_pdf_output_path(file_path: &str) -> Result<PathBuf, String> {
+    if file_path.is_empty() || file_path.len() > 32_767 {
+        return Err("the selected PDF path is invalid".to_string());
+    }
+    let mut path = PathBuf::from(file_path);
+    if !path.is_absolute() {
+        return Err("the selected PDF path must be absolute".to_string());
+    }
+    match path.extension().and_then(|extension| extension.to_str()) {
+        None => {
+            path.set_extension("pdf");
+        }
+        Some(extension) if extension.eq_ignore_ascii_case("pdf") => {}
+        Some(_) => return Err("the selected file must use the .pdf extension".to_string()),
+    }
+    if path.file_name().is_none() {
+        return Err("the selected PDF path must include a file name".to_string());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| "the selected PDF path must include a directory".to_string())?;
+    if !parent.is_dir() {
+        return Err("the selected PDF directory does not exist".to_string());
+    }
+    if path.is_dir() {
+        return Err("the selected PDF path is a directory".to_string());
+    }
+    Ok(path)
+}
+
 fn validate_tab_id(tab_id: &str) -> Result<(), String> {
     if tab_id.is_empty() || !tab_id.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err("invalid tab identifier".to_string());
@@ -2726,8 +2983,8 @@ mod tests {
     use super::{
         assign_tab_to_group, idle_tabs_past_timeout, is_page_webview_label,
         parse_tab_sleep_timeout, rollback_tab_metadata, validate_find_query,
-        validate_group_details, validate_tab_sleep_timeout, BrowserData, BrowserState, TabGroup,
-        TabInfo, TabSleepPolicy,
+        validate_group_details, validate_pdf_output_path, validate_tab_sleep_timeout, BrowserData,
+        BrowserState, TabGroup, TabInfo, TabSleepPolicy,
     };
     use std::{
         collections::{HashMap, HashSet},
@@ -2778,6 +3035,22 @@ mod tests {
         assert!(validate_find_query(&"a".repeat(512)).is_ok());
         assert!(validate_find_query(&"a".repeat(513)).is_err());
         assert!(validate_find_query(&"é".repeat(257)).is_err());
+    }
+
+    #[test]
+    fn pdf_output_path_requires_a_pdf_file_in_an_existing_directory() {
+        let directory = tempfile::tempdir().expect("create temporary directory");
+        let path_without_extension = directory.path().join("web page");
+        let path = validate_pdf_output_path(&path_without_extension.to_string_lossy())
+            .expect("append PDF extension");
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("pdf")
+        );
+
+        let wrong_extension = directory.path().join("web page.txt");
+        assert!(validate_pdf_output_path(&wrong_extension.to_string_lossy()).is_err());
+        assert!(validate_pdf_output_path("relative.pdf").is_err());
     }
 
     #[test]

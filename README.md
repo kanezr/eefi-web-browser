@@ -24,8 +24,8 @@ a custom rendering or JavaScript engine.
   cookie request controls, and controls for clearing cookies/cache.
 - A Windows DPAPI-protected password vault for manually saving, viewing, and
   deleting credentials.
-- Find-in-page (`Ctrl+F`), WebView2 DevTools (`F12`), user scripts, and tab
-  sleeping.
+- Print and Save as PDF, find-in-page (`Ctrl+F`), WebView2 DevTools (`F12`),
+  user scripts, and tab sleeping.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for implementation details and the
 current roadmap.
@@ -56,6 +56,8 @@ current roadmap.
   page context and are not isolated from that page's JavaScript. Only enable
   scripts you trust; they do not run in private windows or subframes.
 - **The release is unsigned.** Windows may display a SmartScreen warning.
+- **Printing uses WebView2.** The print dialog and direct PDF export require a
+  WebView2 Runtime that exposes the relevant printing interfaces.
 
 ## Download and run
 

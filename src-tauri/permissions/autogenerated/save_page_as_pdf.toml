@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-page-as-pdf"
+description = "Enables the save_page_as_pdf command without any pre-configured scope."
+commands.allow = ["save_page_as_pdf"]
+
+[[permission]]
+identifier = "deny-save-page-as-pdf"
+description = "Denies the save_page_as_pdf command without any pre-configured scope."
+commands.deny = ["save_page_as_pdf"]

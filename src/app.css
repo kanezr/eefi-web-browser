@@ -352,6 +352,15 @@ input:focus-visible {
   box-shadow: 0 12px 32px rgb(0 0 0 / 38%);
 }
 
+.browser.menu-open .browser-menu-panel {
+  position: fixed;
+  top: 104px;
+  right: 8px;
+  bottom: 8px;
+  width: 220px;
+  overflow-y: auto;
+}
+
 .browser-menu-panel button {
   min-height: 36px;
   padding: 0 10px;
@@ -387,6 +396,10 @@ input:focus-visible {
   position: absolute;
   inset: 128px 0 0;
   background: #fff;
+}
+
+.browser.menu-open .content {
+  right: 244px;
 }
 
 .browser.find-open .content {

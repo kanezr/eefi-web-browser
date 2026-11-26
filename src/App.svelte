@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { save } from "@tauri-apps/plugin-dialog";
   import Library from "./Library.svelte";
 
   type Tab = {
@@ -48,7 +49,6 @@
   let browserMenuOpen = $state(false);
   let contextTabId = $state("");
   let contextMenuPosition = $state({ x: 0, y: 0 });
-  let menuHidesPage = false;
   let browserMenuElement: HTMLDivElement;
   let tabContextMenuElement = $state<HTMLDivElement | undefined>(undefined);
   let address = $state("");
@@ -290,7 +290,6 @@
     try {
       if (findOpen) closeFind();
       await invoke("set_page_content_visible", { visible: false });
-      menuHidesPage = false;
       browserMenuOpen = false;
       managerView = view;
     } catch (error) {
@@ -298,31 +297,12 @@
     }
   }
 
-  async function toggleBrowserMenu() {
-    if (browserMenuOpen) {
-      await closeBrowserMenu();
-      return;
-    }
-    try {
-      if (!managerView) {
-        await invoke("set_page_content_visible", { visible: false });
-        menuHidesPage = true;
-      }
-      browserMenuOpen = true;
-    } catch (error) {
-      showError(error);
-    }
+  function toggleBrowserMenu() {
+    browserMenuOpen = !browserMenuOpen;
   }
 
-  async function closeBrowserMenu() {
+  function closeBrowserMenu() {
     browserMenuOpen = false;
-    if (!menuHidesPage || managerView) return;
-    menuHidesPage = false;
-    try {
-      await invoke("set_page_content_visible", { visible: true });
-    } catch (error) {
-      showError(error);
-    }
   }
 
   function closeMenuFromOutside(event: PointerEvent) {
@@ -481,6 +461,53 @@
     }
   }
 
+  function pdfFilename(title: string) {
+    let filename = title
+      .replace(/\.pdf$/i, "")
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+      .replace(/[. ]+$/g, "")
+      .trim()
+      .slice(0, 120);
+    if (!filename || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(filename)) {
+      filename = filename ? `_${filename}` : "webpage";
+    }
+    return `${filename}.pdf`;
+  }
+
+  async function printPage() {
+    try {
+      if (browserMenuOpen) await closeBrowserMenu();
+      await invoke("print_page");
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function savePageAsPdf() {
+    if (!activeTab || !activeTabId) return;
+    if (activeTab.sleeping) {
+      showError("Wake the sleeping tab before saving it as a PDF.");
+      return;
+    }
+    const tabId = activeTabId;
+    try {
+      if (browserMenuOpen) await closeBrowserMenu();
+      const filePath = await save({
+        title: "Save page as PDF",
+        defaultPath: pdfFilename(activeTab.title || "webpage"),
+        filters: [{ name: "PDF document", extensions: ["pdf"] }],
+      });
+      if (!filePath) return;
+      const savedPath = await invoke<string>("save_page_as_pdf", { tabId, filePath });
+      message = `PDF saved: ${savedPath}`;
+      window.setTimeout(() => {
+        if (message) message = "";
+      }, 5000);
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   async function resizeContent() {
     if (!contentArea) return;
     const rect = contentArea.getBoundingClientRect();
@@ -612,7 +639,10 @@
 
     const onKeydown = (event: KeyboardEvent) => {
       const modifier = event.ctrlKey || event.metaKey;
-      if (modifier && event.key.toLowerCase() === "f") {
+      if (modifier && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        void printPage();
+      } else if (modifier && event.key.toLowerCase() === "f") {
         event.preventDefault();
         openFind();
       } else if (modifier && event.key.toLowerCase() === "l") {
@@ -683,7 +713,7 @@
 
 <svelte:window onpointerdown={closeMenuFromOutside} />
 
-<main class:find-open={findOpen} class="browser">
+<main class:find-open={findOpen} class:menu-open={browserMenuOpen} class="browser">
   <div class="tab-row" role="tablist" aria-label="Browser tabs">
     {#each tabs as tab (tab.id)}
       {@const group = tabGroups.find((entry) => entry.id === tab.groupId)}
@@ -830,6 +860,9 @@
           <button role="menuitem" onclick={() => void openManager("extensions")}>User scripts</button>
           <button role="menuitem" onclick={() => void openManager("tab-groups")}>Tab groups</button>
           <button role="menuitem" onclick={() => void openManager("settings")}>Settings</button>
+          <hr />
+          <button role="menuitem" onclick={() => void printPage()}>Print… (Ctrl+P)</button>
+          <button role="menuitem" onclick={() => void savePageAsPdf()}>Save as PDF…</button>
           <button role="menuitem" onclick={() => void toggleDevtools()}>Developer tools (F12)</button>
           <hr />
           <button role="menuitem" onclick={() => void openManager("privacy")}>Privacy settings</button>

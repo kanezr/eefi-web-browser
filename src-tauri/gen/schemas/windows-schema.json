@@ -345,10 +345,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-toggle-devtools`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`",
+          "description": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-page-print-dialog`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-toggle-devtools`\n- `allow-print-page`\n- `allow-save-page-as-pdf`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`",
           "type": "string",
           "const": "browser-ui",
-          "markdownDescription": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-toggle-devtools`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`"
+          "markdownDescription": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-page-print-dialog`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-toggle-devtools`\n- `allow-print-page`\n- `allow-save-page-as-pdf`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`"
         },
         {
           "description": "Enables the activate_tab command without any pre-configured scope.",
@@ -579,6 +579,12 @@
           "markdownDescription": "Enables the open_find_bar command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_page_print_dialog command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-page-print-dialog",
+          "markdownDescription": "Enables the open_page_print_dialog command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open_private_window command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-private-window",
@@ -607,6 +613,12 @@
           "type": "string",
           "const": "allow-passwords-save",
           "markdownDescription": "Enables the passwords_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the print_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-print-page",
+          "markdownDescription": "Enables the print_page command without any pre-configured scope."
         },
         {
           "description": "Enables the privacy_clear_cookies_and_cache command without any pre-configured scope.",
@@ -673,6 +685,12 @@
           "type": "string",
           "const": "allow-restore-session",
           "markdownDescription": "Enables the restore_session command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_page_as_pdf command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-save-page-as-pdf",
+          "markdownDescription": "Enables the save_page_as_pdf command without any pre-configured scope."
         },
         {
           "description": "Enables the set_download_directory command without any pre-configured scope.",
@@ -999,6 +1017,12 @@
           "markdownDescription": "Denies the open_find_bar command without any pre-configured scope."
         },
         {
+          "description": "Denies the open_page_print_dialog command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-page-print-dialog",
+          "markdownDescription": "Denies the open_page_print_dialog command without any pre-configured scope."
+        },
+        {
           "description": "Denies the open_private_window command without any pre-configured scope.",
           "type": "string",
           "const": "deny-open-private-window",
@@ -1027,6 +1051,12 @@
           "type": "string",
           "const": "deny-passwords-save",
           "markdownDescription": "Denies the passwords_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the print_page command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-print-page",
+          "markdownDescription": "Denies the print_page command without any pre-configured scope."
         },
         {
           "description": "Denies the privacy_clear_cookies_and_cache command without any pre-configured scope.",
@@ -1093,6 +1123,12 @@
           "type": "string",
           "const": "deny-restore-session",
           "markdownDescription": "Denies the restore_session command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_page_as_pdf command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-save-page-as-pdf",
+          "markdownDescription": "Denies the save_page_as_pdf command without any pre-configured scope."
         },
         {
           "description": "Denies the set_download_directory command without any pre-configured scope.",
@@ -3229,6 +3265,72 @@
           "type": "string",
           "const": "core:window:deny-unminimize",
           "markdownDescription": "Denies the unminimize command without any pre-configured scope."
+        },
+        {
+          "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`",
+          "type": "string",
+          "const": "dialog:default",
+          "markdownDescription": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`"
+        },
+        {
+          "description": "Enables the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:allow-ask",
+          "markdownDescription": "Enables the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)"
+        },
+        {
+          "description": "Enables the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:allow-confirm",
+          "markdownDescription": "Enables the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)"
+        },
+        {
+          "description": "Enables the message command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:allow-message",
+          "markdownDescription": "Enables the message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:allow-open",
+          "markdownDescription": "Enables the open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:allow-save",
+          "markdownDescription": "Enables the save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:deny-ask",
+          "markdownDescription": "Denies the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)"
+        },
+        {
+          "description": "Denies the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:deny-confirm",
+          "markdownDescription": "Denies the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)"
+        },
+        {
+          "description": "Denies the message command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:deny-message",
+          "markdownDescription": "Denies the message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:deny-open",
+          "markdownDescription": "Denies the open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:deny-save",
+          "markdownDescription": "Denies the save command without any pre-configured scope."
         },
         {
           "description": "This permission set allows opening `mailto:`, `tel:`, `https://` and `http://` urls using their default application\nas well as reveal file in directories using default file explorer\n#### This default permission set includes:\n\n- `allow-open-url`\n- `allow-reveal-item-in-dir`\n- `allow-default-urls`",

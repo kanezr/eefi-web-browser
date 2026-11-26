@@ -17,6 +17,7 @@ pub fn run() {
         .manage(tabs::BrowserState::default())
         .manage(tabs::BrowserWindowStates::default())
         .manage(privacy::PrivacyService::default())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) && window.label() != "main" {
@@ -92,9 +93,12 @@ pub fn run() {
             tabs::list_tabs,
             tabs::active_tab_id,
             tabs::toggle_page_devtools,
+            tabs::open_page_print_dialog,
             tabs::open_find_bar,
             tabs::find_in_page,
             tabs::toggle_devtools,
+            tabs::print_page,
+            tabs::save_page_as_pdf,
             tabs::browser_window_mode,
             tabs::open_browser_window,
             tabs::open_private_window,
