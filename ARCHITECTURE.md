@@ -39,6 +39,8 @@ Stage 1 includes working native tabs, drag reordering, omnibox URL/search routin
 
 Run the app with `npm run tauri -- dev`. Validate the UI with `npm run check` and `npm run build`, then run Rust URL and storage tests with `cargo test --manifest-path src-tauri\Cargo.toml`.
 
+The Rust integration suite lives in `src-tauri/tests/backend_workflows.rs`. It uses temporary on-disk profiles and verifies workflows across URL classification, SQLite-backed bookmarks/history, download completion and restart recovery, session groups/revision ordering, and legacy-profile migration. Run it alone with `cargo test --manifest-path src-tauri\Cargo.toml --test backend_workflows`; the full Cargo test command runs the integration suite together with the inline unit tests. These tests exercise Rust services and persistence, not the desktop UI or WebView2 runtime.
+
 ## Stage 3: native ad blocking and initial privacy controls
 
 - Every page-tab WebView2 instance gets a native `WebResourceRequested` handler before it navigates to its requested URL. On runtimes exposing `ICoreWebView2_22`, the filter is registered for every resource context and request source kind; older runtimes use WebView2's earlier context filter, whose worker/source-kind coverage is narrower.

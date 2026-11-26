@@ -1,9 +1,9 @@
 mod adblock;
 mod extensions;
-mod nav;
+pub mod nav;
 mod passwords;
 mod privacy;
-mod storage;
+pub mod storage;
 mod tabs;
 mod update_apply;
 mod updater;
