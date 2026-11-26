@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-updater-current-version"
+description = "Enables the updater_current_version command without any pre-configured scope."
+commands.allow = ["updater_current_version"]
+
+[[permission]]
+identifier = "deny-updater-current-version"
+description = "Denies the updater_current_version command without any pre-configured scope."
+commands.deny = ["updater_current_version"]

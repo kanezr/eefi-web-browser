@@ -77,9 +77,15 @@ const APP_COMMANDS: &[&str] = &[
     "user_scripts_save",
     "user_scripts_set_enabled",
     "user_scripts_delete",
+    "updater_settings_get",
+    "updater_settings_set",
+    "updater_current_version",
+    "updater_check",
+    "updater_install",
 ];
 
 fn main() {
+    assert_version_sync();
     let scriptlets = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("resources")
         .join("ublock")
@@ -98,4 +104,92 @@ fn main() {
             .app_manifest(tauri_build::AppManifest::new().commands(APP_COMMANDS)),
     )
     .expect("failed to build Tauri application metadata");
+}
+
+fn assert_version_sync() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
+        .parent()
+        .expect("src-tauri must be inside the project root");
+    let version_path = root.join("VERSION");
+    let package_path = root.join("package.json");
+    let package_lock_path = root.join("package-lock.json");
+    let cargo_lock_path = manifest_dir.join("Cargo.lock");
+    let tauri_config_path = manifest_dir.join("tauri.conf.json");
+    for path in [
+        &version_path,
+        &package_path,
+        &package_lock_path,
+        &cargo_lock_path,
+        &tauri_config_path,
+    ] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+
+    let canonical = fs::read_to_string(&version_path)
+        .unwrap_or_else(|error| panic!("could not read VERSION: {error}"));
+    let canonical = canonical.trim();
+    assert!(!canonical.is_empty(), "VERSION cannot be empty");
+    assert_version_matches("Cargo.toml", env!("CARGO_PKG_VERSION"), canonical);
+
+    let package: serde_json::Value = read_json(&package_path);
+    assert_version_matches(
+        "package.json",
+        json_version(&package, "package.json"),
+        canonical,
+    );
+
+    let package_lock: serde_json::Value = read_json(&package_lock_path);
+    assert_version_matches(
+        "package-lock.json",
+        json_version(&package_lock, "package-lock.json"),
+        canonical,
+    );
+    assert_version_matches(
+        "package-lock.json root package",
+        package_lock["packages"][""]
+            .get("version")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+        canonical,
+    );
+
+    let tauri_config: serde_json::Value = read_json(&tauri_config_path);
+    assert_version_matches(
+        "tauri.conf.json",
+        json_version(&tauri_config, "tauri.conf.json"),
+        canonical,
+    );
+
+    let cargo_lock = fs::read_to_string(&cargo_lock_path)
+        .unwrap_or_else(|error| panic!("could not read Cargo.lock: {error}"));
+    let eefi_package = cargo_lock.lines().collect::<Vec<_>>();
+    let lock_version = eefi_package
+        .windows(3)
+        .find(|lines| lines[0] == "[[package]]" && lines[1] == "name = \"eefi-browser\"")
+        .and_then(|lines| lines[2].strip_prefix("version = \""))
+        .and_then(|version| version.strip_suffix('"'))
+        .unwrap_or("");
+    assert_version_matches("Cargo.lock", lock_version, canonical);
+}
+
+fn read_json(path: &Path) -> serde_json::Value {
+    let content = fs::read_to_string(path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|error| panic!("could not parse {}: {error}", path.display()))
+}
+
+fn json_version<'a>(value: &'a serde_json::Value, label: &str) -> &'a str {
+    value
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("{label} has no version string"))
+}
+
+fn assert_version_matches(file: &str, actual: &str, canonical: &str) {
+    assert_eq!(
+        actual, canonical,
+        "{file} is not synchronized with VERSION; run `npm run sync-version`."
+    );
 }

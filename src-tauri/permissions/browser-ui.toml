@@ -75,4 +75,9 @@ permissions = [
   "allow-user-scripts-save",
   "allow-user-scripts-set-enabled",
   "allow-user-scripts-delete",
+  "allow-updater-settings-get",
+  "allow-updater-settings-set",
+  "allow-updater-current-version",
+  "allow-updater-check",
+  "allow-updater-install",
 ]

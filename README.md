@@ -5,7 +5,7 @@ Eefi Browser is an early-development desktop browser for Windows. It uses
 the system **Microsoft Edge WebView2** engine for web pages. It does not include
 a custom rendering or JavaScript engine.
 
-> **Development status:** This is an experimental v0.1.0 project, not a mature
+> **Development status:** This is an experimental early-development project, not a mature
 > daily-use browser. Features and compatibility can change, and some browser
 > behavior is intentionally incomplete. Review the limitations below before
 > using it with important data.
@@ -25,7 +25,8 @@ a custom rendering or JavaScript engine.
 - A Windows DPAPI-protected password vault for manually saving, viewing, and
   deleting credentials.
 - Print and Save as PDF, find-in-page (`Ctrl+F`), WebView2 DevTools (`F12`),
-  user scripts, and tab sleeping.
+  user scripts, tab sleeping, and an in-app updater with stable and beta
+  release channels.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for implementation details and the
 current roadmap.
@@ -74,6 +75,15 @@ The ZIP contains the production executable and a short runtime/readme notice.
 The browser UI is bundled into the application; users do not need Node.js, Rust,
 or a Vite server.
 
+The updater checks published GitHub Releases and verifies update executables
+against GitHub's SHA-256 asset digest. Stable builds ignore pre-releases; the
+beta channel also receives pre-releases and later stable releases. Startup
+checks prompt before installing by default; automatic installation is optional
+in **Settings > Updates**. Updates replace the executable in the portable
+folder, so that folder must be writable. The first release containing the
+updater must be downloaded manually by users of earlier versions; later
+releases can be installed in-app.
+
 ## Data and privacy
 
 Browser data such as bookmarks, history, downloads, settings, and saved session
@@ -99,9 +109,17 @@ credentials when reporting a problem.
 Install dependencies and run the development app from the repository root:
 
 ```powershell
+node scripts/sync-version.mjs
 npm ci
 npm run tauri -- dev
 ```
+
+The root `VERSION` file is the source of truth for the application version. Use
+SemVer without a leading `v` (for example `0.2.0` or `0.3.0-beta.1`). The npm
+development, check, build, and Tauri commands synchronize the package manifests
+and lockfiles automatically; run `node scripts/sync-version.mjs` before `npm
+ci` or standalone Cargo commands after changing `VERSION`. Release tags must
+still be created manually as `v<VERSION>`.
 
 The development command starts Vite. To type-check and build the frontend:
 
@@ -136,8 +154,11 @@ The workflows are in [`.github/workflows`](./.github/workflows/):
   push the commit to GitHub.
 - **Windows portable release** runs when a `v*` version tag is pushed, for
   example `v0.1.0`. It checks the frontend, builds the app, packages the ZIP,
-  and creates a GitHub Release with the ZIP attached. The tag version must
-  match `package.json`; the Rust and Tauri package versions should match too.
+  and creates a GitHub Release with both the ZIP and updater executable
+  attached. Tags containing a prerelease suffix (for example
+  `v0.2.0-beta.1`) are published as GitHub pre-releases. The tag version must
+  match the root `VERSION` file; the workflow synchronizes the package metadata
+  and lockfiles from it before building.
 
 These workflows run independently: the release workflow does not wait for the
 Tests workflow. Check that CI has passed before pushing a release tag.

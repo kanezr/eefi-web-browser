@@ -23,6 +23,9 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Synchronize version metadata
+        run: node scripts/sync-version.mjs
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 

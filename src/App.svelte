@@ -2,7 +2,8 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
-  import { save } from "@tauri-apps/plugin-dialog";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { ask, save } from "@tauri-apps/plugin-dialog";
   import Library from "./Library.svelte";
 
   type Tab = {
@@ -39,6 +40,16 @@
   type Bookmark = { id: number; title: string; url: string; onBar: boolean };
   type Suggestion = { title: string; url: string };
   type AdblockStatus = { enabled: boolean; siteAllowed: boolean; blockedCount: number };
+  type UpdaterSettings = {
+    channel: "stable" | "beta";
+    automaticUpdates: boolean;
+    checkOnStartup: boolean;
+  };
+  type UpdateCheck = {
+    currentVersion: string;
+    latestVersion: string | null;
+    updateAvailable: boolean;
+  };
 
   let tabs: Tab[] = $state([]);
   let tabGroups: TabGroup[] = $state([]);
@@ -538,6 +549,32 @@
     }, 5000);
   }
 
+  async function checkForUpdatesAtStartup() {
+    if (privateMode || getCurrentWindow().label !== "main") return;
+    try {
+      const settings = await invoke<UpdaterSettings>("updater_settings_get");
+      if (!settings.checkOnStartup) return;
+      const result = await invoke<UpdateCheck>("updater_check");
+      if (!result.updateAvailable || !result.latestVersion) return;
+
+      if (settings.automaticUpdates) {
+        message = `Installing Eefi Browser v${result.latestVersion}…`;
+        await invoke("updater_install", { version: result.latestVersion });
+        return;
+      }
+
+      const accepted = await ask(
+        `Eefi Browser v${result.latestVersion} is available. Download and install it now?`,
+        { title: "Eefi Browser update", kind: "info" },
+      );
+      if (accepted) {
+        await invoke("updater_install", { version: result.latestVersion });
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   function onTabKeydown(event: KeyboardEvent, tabId: string) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -630,6 +667,7 @@
         await refreshBookmarkStatus();
         await resizeContent();
         focusAddress();
+        window.setTimeout(() => void checkForUpdatesAtStartup(), 1500);
         observer = new ResizeObserver(() => void resizeContent());
         if (contentArea) observer.observe(contentArea);
       } catch (error) {

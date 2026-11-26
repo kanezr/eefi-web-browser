@@ -5,6 +5,8 @@ mod passwords;
 mod privacy;
 mod storage;
 mod tabs;
+mod update_apply;
+mod updater;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -162,7 +164,12 @@ pub fn run() {
             extensions::user_scripts_list,
             extensions::user_scripts_save,
             extensions::user_scripts_set_enabled,
-            extensions::user_scripts_delete
+            extensions::user_scripts_delete,
+            updater::updater_settings_get,
+            updater::updater_settings_set,
+            updater::updater_current_version,
+            updater::updater_check,
+            updater::updater_install
         ])
         .build(tauri::generate_context!())
         .expect("error while building Eefi Browser");
@@ -214,4 +221,8 @@ pub fn run() {
             });
         }
     });
+}
+
+pub fn run_update_helper() -> bool {
+    update_apply::run_if_requested()
 }

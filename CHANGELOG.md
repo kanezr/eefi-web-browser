@@ -8,6 +8,10 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 
 ### Added
 
+- Added an updater settings section with stable and beta release channels,
+  optional automatic installation, startup checks, and a manual update check.
+- Added release executable assets and GitHub pre-release tagging so the
+  portable browser can download and install updates from GitHub Releases.
 - Added the WebView2 print dialog. Use **Print** from the browser menu or press
   `Ctrl+P` while the browser chrome or a page is focused.
 - Added **Save as PDF** from the browser menu. Choose a destination with the

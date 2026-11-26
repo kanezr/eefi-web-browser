@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { ask } from "@tauri-apps/plugin-dialog";
 
   type View =
     | "bookmarks"
@@ -55,6 +56,17 @@
     source: string;
     enabled: boolean;
     updatedAt: number;
+  };
+  type UpdateChannel = "stable" | "beta";
+  type UpdaterSettings = {
+    channel: UpdateChannel;
+    automaticUpdates: boolean;
+    checkOnStartup: boolean;
+  };
+  type UpdateCheck = {
+    currentVersion: string;
+    latestVersion: string | null;
+    updateAvailable: boolean;
   };
 
   type Props = {
@@ -138,6 +150,16 @@
   let tabSleepTimeout = $state(900);
   let tabSleepSettingsLoading = $state(false);
   let savingTabSleepTimeout = $state(false);
+  let updaterSettings = $state<UpdaterSettings>({
+    channel: "stable",
+    automaticUpdates: false,
+    checkOnStartup: true,
+  });
+  let updaterSettingsLoading = $state(false);
+  let savingUpdaterSettings = $state(false);
+  let checkingForUpdates = $state(false);
+  let updaterStatus = $state("");
+  let appVersion = $state("");
   let revealTimer: number | undefined;
 
   const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
@@ -214,6 +236,82 @@
       reportError(reason);
     } finally {
       tabSleepSettingsLoading = false;
+    }
+  }
+
+  async function loadUpdaterSettings() {
+    updaterSettingsLoading = true;
+    try {
+      const [settings, version] = await Promise.all([
+        invoke<UpdaterSettings>("updater_settings_get"),
+        invoke<string>("updater_current_version"),
+      ]);
+      updaterSettings = settings;
+      appVersion = version;
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      updaterSettingsLoading = false;
+    }
+  }
+
+  async function saveUpdaterSettings(changes: Partial<UpdaterSettings>) {
+    if (savingUpdaterSettings || updaterSettingsLoading) return;
+    const previous = updaterSettings;
+    const next = { ...previous, ...changes };
+    updaterSettings = next;
+    savingUpdaterSettings = true;
+    try {
+      updaterSettings = await invoke<UpdaterSettings>("updater_settings_set", {
+        settings: next,
+      });
+    } catch (reason) {
+      updaterSettings = previous;
+      reportError(reason);
+    } finally {
+      savingUpdaterSettings = false;
+    }
+  }
+
+  async function checkForUpdates() {
+    checkingForUpdates = true;
+    updaterStatus = "Checking for updates…";
+    try {
+      const result = await invoke<UpdateCheck>("updater_check");
+      if (!result.updateAvailable || !result.latestVersion) {
+        updaterStatus = `You're up to date (v${result.currentVersion}).`;
+        return;
+      }
+      const accepted = await ask(
+        `Version ${result.latestVersion} is available. Download and install it now?`,
+        { title: "Eefi Browser update", kind: "info" },
+      );
+      if (!accepted) {
+        updaterStatus = `Version ${result.latestVersion} is available.`;
+        return;
+      }
+      updaterStatus = `Downloading v${result.latestVersion}… The browser will restart to finish installing.`;
+      await invoke("updater_install", { version: result.latestVersion });
+    } catch (reason) {
+      updaterStatus = "The update check failed.";
+      reportError(reason);
+    } finally {
+      checkingForUpdates = false;
+    }
+  }
+
+  function updateUpdaterBoolean(
+    key: "automaticUpdates" | "checkOnStartup",
+    event: Event,
+  ) {
+    const checked = (event.currentTarget as HTMLInputElement).checked;
+    void saveUpdaterSettings({ [key]: checked });
+  }
+
+  function updateUpdaterChannel(event: Event) {
+    const channel = (event.currentTarget as HTMLSelectElement).value;
+    if (channel === "stable" || channel === "beta") {
+      void saveUpdaterSettings({ channel });
     }
   }
 
@@ -299,7 +397,9 @@
     if (view === "downloads") await loadDownloads();
     if (view === "passwords") await loadPasswords();
     if (view === "privacy") await loadPrivacy();
-    if (view === "settings") await loadTabSleepSettings();
+    if (view === "settings") {
+      await Promise.all([loadTabSleepSettings(), loadUpdaterSettings()]);
+    }
     if (view === "extensions") await loadUserScripts();
   }
 
@@ -1187,6 +1287,56 @@
           and that tab's back/forward history are not preserved.
         </p>
       </article>
+      <article class="privacy-card updater-card">
+        <h2>Updates</h2>
+        <p>Current version: <strong>v{appVersion || "…"}</strong></p>
+        <label for="update-channel"><strong>Build channel</strong></label>
+        <select
+          id="update-channel"
+          value={updaterSettings.channel}
+          disabled={updaterSettingsLoading || savingUpdaterSettings}
+          onchange={updateUpdaterChannel}
+        >
+          <option value="stable">Stable releases</option>
+          <option value="beta">Beta (pre-releases and stable releases)</option>
+        </select>
+        <label class="privacy-toggle">
+          <input
+            type="checkbox"
+            checked={updaterSettings.automaticUpdates}
+            disabled={updaterSettingsLoading || savingUpdaterSettings}
+            onchange={(event) => updateUpdaterBoolean("automaticUpdates", event)}
+          />
+          <span>
+            <strong>Install updates automatically</strong>
+            <small>When a startup check finds an update, install it and restart without asking.</small>
+          </span>
+        </label>
+        <label class="privacy-toggle">
+          <input
+            type="checkbox"
+            checked={updaterSettings.checkOnStartup}
+            disabled={updaterSettingsLoading || savingUpdaterSettings}
+            onchange={(event) => updateUpdaterBoolean("checkOnStartup", event)}
+          />
+          <span>
+            <strong>Check for updates at startup</strong>
+            <small>When automatic installation is off, ask before downloading an available update.</small>
+          </span>
+        </label>
+        <div class="updater-actions">
+          <button
+            class="primary-button"
+            disabled={updaterSettingsLoading || checkingForUpdates}
+            onclick={() => void checkForUpdates()}
+          >{checkingForUpdates ? "Checking…" : "Check for updates"}</button>
+          {#if updaterStatus}<small role="status">{updaterStatus}</small>{/if}
+        </div>
+        <p>
+          Updates are downloaded from Eefi Browser GitHub releases. The browser restarts to replace its executable;
+          keep the portable folder writable.
+        </p>
+      </article>
     </section>
   {:else}
     <section class="privacy-settings" aria-label="Privacy settings">
@@ -1378,6 +1528,12 @@
   .performance-card h2 { margin: 0; font-size: 15px; }
   .performance-card p { margin: 0; }
   .performance-card select { min-width: 190px; }
+  .updater-card { display: grid; justify-items: start; gap: 11px; }
+  .updater-card h2 { margin: 0; font-size: 15px; }
+  .updater-card > p { margin: 0; }
+  .updater-card select { min-width: min(320px, 100%); }
+  .updater-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .updater-actions small { color: #586174; }
   .privacy-card + .privacy-card { margin-top: 12px; }
   .privacy-toggle { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
   .privacy-toggle input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: #4459e8; }

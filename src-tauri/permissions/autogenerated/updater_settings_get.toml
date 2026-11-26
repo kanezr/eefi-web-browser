@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-updater-settings-get"
+description = "Enables the updater_settings_get command without any pre-configured scope."
+commands.allow = ["updater_settings_get"]
+
+[[permission]]
+identifier = "deny-updater-settings-get"
+description = "Denies the updater_settings_get command without any pre-configured scope."
+commands.deny = ["updater_settings_get"]
