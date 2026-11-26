@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-browser-window-mode"
+description = "Enables the browser_window_mode command without any pre-configured scope."
+commands.allow = ["browser_window_mode"]
+
+[[permission]]
+identifier = "deny-browser-window-mode"
+description = "Denies the browser_window_mode command without any pre-configured scope."
+commands.deny = ["browser_window_mode"]

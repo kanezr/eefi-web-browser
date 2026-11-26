@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-user-scripts-save"
+description = "Enables the user_scripts_save command without any pre-configured scope."
+commands.allow = ["user_scripts_save"]
+
+[[permission]]
+identifier = "deny-user-scripts-save"
+description = "Denies the user_scripts_save command without any pre-configured scope."
+commands.deny = ["user_scripts_save"]

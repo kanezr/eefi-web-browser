@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resize-active-view"
+description = "Enables the resize_active_view command without any pre-configured scope."
+commands.allow = ["resize_active_view"]
+
+[[permission]]
+identifier = "deny-resize-active-view"
+description = "Denies the resize_active_view command without any pre-configured scope."
+commands.deny = ["resize_active_view"]

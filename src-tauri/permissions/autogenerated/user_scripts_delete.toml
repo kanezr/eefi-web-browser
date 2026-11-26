@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-user-scripts-delete"
+description = "Enables the user_scripts_delete command without any pre-configured scope."
+commands.allow = ["user_scripts_delete"]
+
+[[permission]]
+identifier = "deny-user-scripts-delete"
+description = "Denies the user_scripts_delete command without any pre-configured scope."
+commands.deny = ["user_scripts_delete"]

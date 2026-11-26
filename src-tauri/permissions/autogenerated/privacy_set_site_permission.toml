@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-privacy-set-site-permission"
+description = "Enables the privacy_set_site_permission command without any pre-configured scope."
+commands.allow = ["privacy_set_site_permission"]
+
+[[permission]]
+identifier = "deny-privacy-set-site-permission"
+description = "Denies the privacy_set_site_permission command without any pre-configured scope."
+commands.deny = ["privacy_set_site_permission"]

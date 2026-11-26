@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-page-devtools"
+description = "Enables the toggle_page_devtools command without any pre-configured scope."
+commands.allow = ["toggle_page_devtools"]
+
+[[permission]]
+identifier = "deny-toggle-page-devtools"
+description = "Denies the toggle_page_devtools command without any pre-configured scope."
+commands.deny = ["toggle_page_devtools"]

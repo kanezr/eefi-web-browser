@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tab-group-delete"
+description = "Enables the tab_group_delete command without any pre-configured scope."
+commands.allow = ["tab_group_delete"]
+
+[[permission]]
+identifier = "deny-tab-group-delete"
+description = "Denies the tab_group_delete command without any pre-configured scope."
+commands.deny = ["tab_group_delete"]

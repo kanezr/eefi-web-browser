@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stage 3 WebView2 verification</title>
+  <style>
+    body { font: 15px system-ui; margin: 24px; background: #171923; color: #eef0f8; }
+    li.pass { color: #8de0a0; }
+    li.fail { color: #ff9a9a; }
+    iframe { width: 100%; height: 100px; border: 1px solid #555; }
+  </style>
+</head>
+<body>
+  <h1>Stage 3 live verification</h1>
+  <p>Expected: scriptlet probe true; both shadow ad nodes hidden; test fetch/image/document requests return empty blocked responses; frame and worker report.</p>
+  <ol id="results"></ol>
+  <button id="popup-test">Attempt a popup</button>
+  <div id="light-dom-ad" class="eefi-shadow-ad">specific light DOM ad</div>
+  <div id="shadow-host"></div>
+  <iframe id="same-origin-frame" src="/__stage3__/frame.html"></iframe>
+  <iframe id="blocked-document-frame"></iframe>
+  <script>
+    const results = window.__eefiStage3Results = {};
+    const list = document.querySelector('#results');
+    const report = (name, pass, detail = '') => {
+      results[name] = { pass, detail };
+      let item = [...list.children].find(node => node.dataset.name === name);
+      if (!item) {
+        item = document.createElement('li');
+        item.dataset.name = name;
+        list.append(item);
+      }
+      item.className = pass ? 'pass' : 'fail';
+      item.textContent = `${pass ? 'PASS' : 'FAIL'}: ${name}${detail ? ` — ${detail}` : ''}`;
+    };
+    window.addEventListener('error', event => report('fixture runtime error', false, event.message));
+    window.addEventListener('unhandledrejection', event =>
+      report('fixture unhandled rejection', false, String(event.reason)));
+
+    const scriptletProbePassed = window.__eefiScriptletProbe === true;
+    const shadow = document.querySelector('#shadow-host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div class="eefi-shadow-ad">specific shadow ad</div>' +
+      '<div class="eefi-generic-ad">generic shadow ad</div>';
+    const observedRoots = [];
+    window.__eefiCosmeticRootsV1?.subscribe(root => observedRoots.push(root));
+
+    const probe = new Image();
+    probe.onload = () => report('image request blocked', false, 'image loaded');
+    probe.onerror = () => report('image request blocked', true);
+    probe.src = '/__stage3__/blocked-image.svg';
+    fetch('/__stage3__/blocked-fetch.txt')
+      .then(response => report('fetch request blocked',
+        response.status === 204, `status ${response.status}`))
+      .catch(error => report('fetch request blocked', false, String(error)));
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', '/__stage3__/blocked-fetch.txt');
+    xhr.onload = () => report('XHR request blocked', xhr.status === 204, `status ${xhr.status}`);
+    xhr.onerror = () => report('XHR request blocked', true);
+    xhr.send();
+
+    const worker = new Worker('/__stage3__/worker.js');
+    worker.onmessage = event => report('worker request blocked',
+      event.data.kind === 'request-blocked', `status ${event.data.status ?? 'unavailable'}`);
+    worker.onerror = () => report('worker started', false);
+
+    window.addEventListener('message', event => {
+      if (event.data?.kind === 'frame-results') {
+        for (const [name, result] of Object.entries(event.data.results)) {
+          report(`frame: ${name}`, result.pass, result.detail);
+        }
+      }
+    });
+    const blockedDocumentFrame = document.querySelector('#blocked-document-frame');
+    blockedDocumentFrame.addEventListener('load', () => {
+      const frame = blockedDocumentFrame;
+      const text = frame.contentDocument?.body?.textContent ?? '';
+      report('document request blocked', !text.includes('fixture-document-not-blocked'));
+    });
+    blockedDocumentFrame.src = '/__stage3__/blocked-document.html';
+    setTimeout(() => {
+      if (!Object.prototype.hasOwnProperty.call(results, 'document request blocked')) {
+        const text = blockedDocumentFrame.contentDocument?.body?.textContent ?? '';
+        report('document request blocked', !text.includes('fixture-document-not-blocked'),
+          'checked after frame load timeout');
+      }
+    }, 1000);
+
+    const waitForCosmetics = async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const specific = getComputedStyle(shadow.querySelector('.eefi-shadow-ad')).display === 'none';
+        const generic = getComputedStyle(shadow.querySelector('.eefi-generic-ad')).display === 'none';
+        if (window.__eefiScriptletProbe === true && specific && generic) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      report('document-start scriptlet', scriptletProbePassed);
+      report('open shadow root registered',
+        [...(window.__eefiCosmeticRootsV1?.roots || [])].includes(shadow));
+      report('shadow root subscriber notified', observedRoots.includes(shadow));
+      report('shadow root style count', shadow.querySelectorAll('style').length);
+      const pageStyle = [...document.querySelectorAll('style[data-eefi-cosmetic]')]
+        .some(style => style.textContent.includes('.eefi-shadow-ad'));
+      report('document cosmetic stylesheet installed', pageStyle);
+      const shadowStyle = shadow.querySelector('style[data-eefi-cosmetic]');
+      report('specific cosmetic stylesheet installed',
+        shadowStyle?.textContent.includes('.eefi-shadow-ad') ?? false);
+      report('scriptlet property trapped',
+        Object.prototype.hasOwnProperty.call(window, '__eefiScriptletProbe'));
+      report('specific shadow cosmetic',
+        getComputedStyle(shadow.querySelector('.eefi-shadow-ad')).display === 'none');
+      report('generic shadow cosmetic',
+        getComputedStyle(shadow.querySelector('.eefi-generic-ad')).display === 'none');
+      report('light DOM cosmetic',
+        getComputedStyle(document.querySelector('#light-dom-ad')).display === 'none');
+    };
+    waitForCosmetics();
+
+    document.querySelector('#popup-test').addEventListener('click', () => {
+      window.open('https://example.com/', 'eefi-stage3-popup');
+      report('popup attempt issued', true, 'verify no new browser window appears');
+    });
+  </script>
+</body>
+</html>

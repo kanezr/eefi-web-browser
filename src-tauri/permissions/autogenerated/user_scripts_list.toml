@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-user-scripts-list"
+description = "Enables the user_scripts_list command without any pre-configured scope."
+commands.allow = ["user_scripts_list"]
+
+[[permission]]
+identifier = "deny-user-scripts-list"
+description = "Denies the user_scripts_list command without any pre-configured scope."
+commands.deny = ["user_scripts_list"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-adblock-set-site-allowed"
+description = "Enables the adblock_set_site_allowed command without any pre-configured scope."
+commands.allow = ["adblock_set_site_allowed"]
+
+[[permission]]
+identifier = "deny-adblock-set-site-allowed"
+description = "Denies the adblock_set_site_allowed command without any pre-configured scope."
+commands.deny = ["adblock_set_site_allowed"]

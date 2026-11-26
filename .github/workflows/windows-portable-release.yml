@@ -1,0 +1,79 @@
+name: Windows portable release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Check frontend
+        run: npm run check
+
+      - name: Build Windows executable
+        run: npm run tauri -- build --no-bundle --ci
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: |
+          $version = (node -p "require('./package.json').version").Trim()
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($tagVersion -ne $version) {
+            throw "Release tag version '$tagVersion' does not match package.json version '$version'."
+          }
+
+          $executable = "src-tauri/target/release/eefi-browser.exe"
+          if (-not (Test-Path $executable)) {
+            throw "Release executable was not produced: $executable"
+          }
+
+          $packageDirectory = Join-Path $env:RUNNER_TEMP "eefi-browser"
+          New-Item -ItemType Directory -Force -Path $packageDirectory | Out-Null
+          Copy-Item $executable (Join-Path $packageDirectory "Eefi Browser.exe")
+
+          $readme = @(
+            "Eefi Browser $version - Windows x64"
+            ""
+            "To run:"
+            "1. Extract the entire ZIP."
+            '2. Run "Eefi Browser.exe".'
+            ""
+            "Requirement:"
+            "Microsoft Edge WebView2 Evergreen Runtime is required. It is included on most"
+            "current Windows 10 and Windows 11 installations. If Eefi Browser does not start,"
+            "install the Evergreen Runtime from:"
+            "https://developer.microsoft.com/microsoft-edge/webview2/"
+            ""
+            "This is an early-development, unsigned build. Windows may show a SmartScreen"
+            "warning. The browser UI is bundled in the executable; Vite is not required."
+          )
+          $readme | Set-Content -Encoding utf8 (Join-Path $packageDirectory "README.txt")
+
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "eefi-browser-$version-windows-x64.zip"
+          Compress-Archive -Path (Join-Path $packageDirectory "*") -DestinationPath $zipPath
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: eefi-browser-*-windows-x64.zip

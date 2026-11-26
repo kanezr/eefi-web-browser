@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Stage 3 frame test</title></head>
+<body>
+  <div id="shadow-host"></div>
+  <script>
+    const scriptletProbePassed = window.__eefiScriptletProbe === true;
+    const shadow = document.querySelector('#shadow-host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div class="eefi-shadow-ad">specific frame ad</div>' +
+      '<div class="eefi-generic-ad">generic frame ad</div>';
+    fetch('/__stage3__/blocked-fetch.txt')
+      .then(response => parent.postMessage({
+        kind: 'frame-results',
+        results: {
+          'frame fetch blocked': {
+            pass: response.status === 204,
+            detail: `status ${response.status}`
+          }
+        }
+      }, '*'))
+      .catch(error => parent.postMessage({
+        kind: 'frame-results',
+        results: { 'frame fetch blocked': { pass: false, detail: String(error) } }
+      }, '*'));
+
+    const report = async () => {
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const hidden = getComputedStyle(shadow.querySelector('.eefi-shadow-ad')).display === 'none' &&
+          getComputedStyle(shadow.querySelector('.eefi-generic-ad')).display === 'none';
+        if (window.__eefiScriptletProbe === true && hidden) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      parent.postMessage({
+        kind: 'frame-results',
+        results: {
+          'document-start scriptlet': { pass: scriptletProbePassed },
+          'specific shadow cosmetic': {
+            pass: getComputedStyle(shadow.querySelector('.eefi-shadow-ad')).display === 'none'
+          },
+          'generic shadow cosmetic': {
+            pass: getComputedStyle(shadow.querySelector('.eefi-generic-ad')).display === 'none'
+          },
+          'open shadow root registered': {
+            pass: [...(window.__eefiCosmeticRootsV1?.roots || [])].includes(shadow)
+          }
+        }
+      }, '*');
+    };
+    report();
+  </script>
+</body>
+</html>

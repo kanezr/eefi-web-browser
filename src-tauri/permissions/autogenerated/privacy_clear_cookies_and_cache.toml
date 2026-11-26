@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-privacy-clear-cookies-and-cache"
+description = "Enables the privacy_clear_cookies_and_cache command without any pre-configured scope."
+commands.allow = ["privacy_clear_cookies_and_cache"]
+
+[[permission]]
+identifier = "deny-privacy-clear-cookies-and-cache"
+description = "Denies the privacy_clear_cookies_and_cache command without any pre-configured scope."
+commands.deny = ["privacy_clear_cookies_and_cache"]
