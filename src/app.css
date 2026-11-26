@@ -245,6 +245,15 @@ input:focus-visible {
   color: #e7b64f;
 }
 
+.oneko-button.oneko-on {
+  color: #c5b5ff;
+  background: rgb(141 99 216 / 18%);
+}
+
+.oneko-site-button.site-hidden {
+  color: #e7b64f;
+}
+
 .adblock-button {
   position: relative;
   width: 31px;

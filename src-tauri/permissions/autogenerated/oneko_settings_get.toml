@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-oneko-settings-get"
+description = "Enables the oneko_settings_get command without any pre-configured scope."
+commands.allow = ["oneko_settings_get"]
+
+[[permission]]
+identifier = "deny-oneko-settings-get"
+description = "Denies the oneko_settings_get command without any pre-configured scope."
+commands.deny = ["oneko_settings_get"]

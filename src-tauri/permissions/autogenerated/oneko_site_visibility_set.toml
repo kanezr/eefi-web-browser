@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-oneko-site-visibility-set"
+description = "Enables the oneko_site_visibility_set command without any pre-configured scope."
+commands.allow = ["oneko_site_visibility_set"]
+
+[[permission]]
+identifier = "deny-oneko-site-visibility-set"
+description = "Denies the oneko_site_visibility_set command without any pre-configured scope."
+commands.deny = ["oneko_site_visibility_set"]

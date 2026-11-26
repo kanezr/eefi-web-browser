@@ -1,6 +1,7 @@
 mod adblock;
 mod extensions;
 pub mod nav;
+mod oneko;
 mod passwords;
 mod privacy;
 pub mod storage;
@@ -43,6 +44,13 @@ pub fn run() {
             let window = app
                 .get_window("main")
                 .ok_or("main browser window is missing")?;
+            let main_webview = app
+                .get_webview("main")
+                .ok_or("main browser webview is missing")?;
+            main_webview.eval(&format!(
+                "window.__eefiOnekoBrowserUi=true;{}",
+                oneko::initialization_script()
+            ))?;
             let state = app.state::<tabs::BrowserState>().inner().clone();
             let app_handle = app.handle().clone();
             let storage = app.state::<storage::StorageService>().inner().clone();
@@ -169,7 +177,11 @@ pub fn run() {
             updater::updater_settings_set,
             updater::updater_current_version,
             updater::updater_check,
-            updater::updater_install
+            updater::updater_install,
+            oneko::oneko_settings_get,
+            oneko::oneko_settings_set,
+            oneko::oneko_toggle,
+            oneko::oneko_site_visibility_set
         ])
         .build(tauri::generate_context!())
         .expect("error while building Eefi Browser");

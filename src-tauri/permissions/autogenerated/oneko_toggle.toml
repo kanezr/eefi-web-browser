@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-oneko-toggle"
+description = "Enables the oneko_toggle command without any pre-configured scope."
+commands.allow = ["oneko_toggle"]
+
+[[permission]]
+identifier = "deny-oneko-toggle"
+description = "Denies the oneko_toggle command without any pre-configured scope."
+commands.deny = ["oneko_toggle"]

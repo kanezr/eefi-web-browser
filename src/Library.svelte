@@ -63,6 +63,13 @@
     automaticUpdates: boolean;
     checkOnStartup: boolean;
   };
+  type OnekoSettings = {
+    enabled: boolean;
+    speed: "slow" | "normal" | "fast";
+    size: 1 | 2;
+    showBrowserPages: boolean;
+    hideOnSite: boolean;
+  };
   type UpdateCheck = {
     currentVersion: string;
     latestVersion: string | null;
@@ -150,6 +157,15 @@
   let tabSleepTimeout = $state(900);
   let tabSleepSettingsLoading = $state(false);
   let savingTabSleepTimeout = $state(false);
+  let onekoSettings = $state<OnekoSettings>({
+    enabled: false,
+    speed: "normal",
+    size: 1,
+    showBrowserPages: false,
+    hideOnSite: false,
+  });
+  let onekoSettingsLoading = $state(false);
+  let savingOnekoSettings = $state(false);
   let updaterSettings = $state<UpdaterSettings>({
     channel: "stable",
     automaticUpdates: false,
@@ -252,6 +268,54 @@
       reportError(reason);
     } finally {
       updaterSettingsLoading = false;
+    }
+  }
+
+  async function loadOnekoSettings() {
+    onekoSettingsLoading = true;
+    try {
+      onekoSettings = await invoke<OnekoSettings>("oneko_settings_get", { host: null });
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      onekoSettingsLoading = false;
+    }
+  }
+
+  async function saveOnekoSettings(changes: Partial<OnekoSettings>) {
+    if (savingOnekoSettings || onekoSettingsLoading) return;
+    const previous = onekoSettings;
+    const next = { ...previous, ...changes };
+    onekoSettings = next;
+    savingOnekoSettings = true;
+    try {
+      onekoSettings = await invoke<OnekoSettings>("oneko_settings_set", {
+        settings: next,
+      });
+    } catch (reason) {
+      onekoSettings = previous;
+      reportError(reason);
+    } finally {
+      savingOnekoSettings = false;
+    }
+  }
+
+  function updateOnekoBoolean(
+    key: "enabled" | "showBrowserPages",
+    event: Event,
+  ) {
+    const checked = (event.currentTarget as HTMLInputElement).checked;
+    void saveOnekoSettings({ [key]: checked });
+  }
+
+  function updateOnekoChoice(key: "speed" | "size", event: Event) {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (key === "speed") {
+      if (value === "slow" || value === "normal" || value === "fast") {
+        void saveOnekoSettings({ speed: value });
+      }
+    } else if (value === "1" || value === "2") {
+      void saveOnekoSettings({ size: value === "1" ? 1 : 2 });
     }
   }
 
@@ -398,7 +462,7 @@
     if (view === "passwords") await loadPasswords();
     if (view === "privacy") await loadPrivacy();
     if (view === "settings") {
-      await Promise.all([loadTabSleepSettings(), loadUpdaterSettings()]);
+      await Promise.all([loadTabSleepSettings(), loadUpdaterSettings(), loadOnekoSettings()]);
     }
     if (view === "extensions") await loadUserScripts();
   }
@@ -1266,6 +1330,55 @@
     </div>
   {:else if view === "settings"}
     <section class="privacy-settings" aria-label="Browser settings">
+      <article class="privacy-card oneko-settings-card">
+        <h2>Oneko cat</h2>
+        <label class="privacy-toggle">
+          <input
+            type="checkbox"
+            checked={onekoSettings.enabled}
+            disabled={onekoSettingsLoading || savingOnekoSettings}
+            onchange={(event) => updateOnekoBoolean("enabled", event)}
+          />
+          <span>
+            <strong>Enable the cat</strong>
+            <small>Follow your pointer on web pages. Toggle instantly with Ctrl+Shift+K.</small>
+          </span>
+        </label>
+        <label for="oneko-speed"><strong>Speed</strong></label>
+        <select
+          id="oneko-speed"
+          value={onekoSettings.speed}
+          disabled={onekoSettingsLoading || savingOnekoSettings}
+          onchange={(event) => updateOnekoChoice("speed", event)}
+        >
+          <option value="slow">Slow</option>
+          <option value="normal">Normal</option>
+          <option value="fast">Fast</option>
+        </select>
+        <label for="oneko-size"><strong>Size</strong></label>
+        <select
+          id="oneko-size"
+          value={onekoSettings.size}
+          disabled={onekoSettingsLoading || savingOnekoSettings}
+          onchange={(event) => updateOnekoChoice("size", event)}
+        >
+          <option value={1}>1x</option>
+          <option value={2}>2x</option>
+        </select>
+        <label class="privacy-toggle">
+          <input
+            type="checkbox"
+            checked={onekoSettings.showBrowserPages}
+            disabled={onekoSettingsLoading || savingOnekoSettings}
+            onchange={(event) => updateOnekoBoolean("showBrowserPages", event)}
+          />
+          <span>
+            <strong>Show cat on browser pages</strong>
+            <small>Also show it on blank/new-tab pages; browser controls are never covered.</small>
+          </span>
+        </label>
+        <p>Reduced-motion preferences display a still sitting cat instead of animations.</p>
+      </article>
       <article class="privacy-card performance-card">
         <h2>Performance</h2>
         <label for="tab-sleep-timeout"><strong>Discard inactive tabs after</strong></label>

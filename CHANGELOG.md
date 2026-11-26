@@ -4,7 +4,16 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.2] - 2026-11-26
+
+### Added
+
+- Added the optional Oneko cat overlay with a toolbar toggle, `Ctrl+Shift+K`
+  shortcut, per-site hiding, speed/size settings, and reduced-motion support.
+- Added integration tests
+- Added security policy
+
+## [0.1.1] - 2026-11-26
 
 ### Added
 

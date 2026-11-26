@@ -80,4 +80,8 @@ permissions = [
   "allow-updater-current-version",
   "allow-updater-check",
   "allow-updater-install",
+  "allow-oneko-settings-get",
+  "allow-oneko-settings-set",
+  "allow-oneko-toggle",
+  "allow-oneko-site-visibility-set",
 ]

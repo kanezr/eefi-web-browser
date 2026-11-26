@@ -82,6 +82,10 @@ const APP_COMMANDS: &[&str] = &[
     "updater_current_version",
     "updater_check",
     "updater_install",
+    "oneko_settings_get",
+    "oneko_settings_set",
+    "oneko_toggle",
+    "oneko_site_visibility_set",
 ];
 
 fn main() {

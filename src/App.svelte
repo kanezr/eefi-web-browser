@@ -40,6 +40,14 @@
   type Bookmark = { id: number; title: string; url: string; onBar: boolean };
   type Suggestion = { title: string; url: string };
   type AdblockStatus = { enabled: boolean; siteAllowed: boolean; blockedCount: number };
+  type OnekoSettings = {
+    enabled: boolean;
+    speed: "slow" | "normal" | "fast";
+    size: 1 | 2;
+    showBrowserPages: boolean;
+    hideOnSite: boolean;
+    siteHost?: string;
+  };
   type UpdaterSettings = {
     channel: "stable" | "beta";
     automaticUpdates: boolean;
@@ -74,6 +82,13 @@
   let adblockEnabled = $state(true);
   let currentSiteAllowed = $state(false);
   let blockedCount = $state(0);
+  let onekoSettings = $state<OnekoSettings>({
+    enabled: false,
+    speed: "normal",
+    size: 1,
+    showBrowserPages: false,
+    hideOnSite: false,
+  });
   let findOpen = $state(false);
   let findQuery = $state("");
   let findMatchCount = $state(0);
@@ -83,6 +98,7 @@
   let suggestionTimer: number | undefined;
   let suggestionRequest = 0;
   let findTimer: number | undefined;
+  let onekoSettingsRequest = 0;
 
   const activeTab = $derived(tabs.find((tab) => tab.id === activeTabId));
   const isSecure = $derived(activeTab?.url.startsWith("https://") ?? false);
@@ -134,6 +150,48 @@
     }
   }
 
+  async function refreshOnekoSettings(url = activeTab?.url ?? "") {
+    const host = hostForUrl(url);
+    const request = ++onekoSettingsRequest;
+    try {
+      const settings = await invoke<OnekoSettings>("oneko_settings_get", {
+        host: host || null,
+      });
+      if (request === onekoSettingsRequest) onekoSettings = settings;
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function toggleOneko() {
+    const request = ++onekoSettingsRequest;
+    try {
+      const settings = await invoke<OnekoSettings>("oneko_toggle");
+      if (request === onekoSettingsRequest) {
+        onekoSettings = {
+          ...settings,
+          hideOnSite: onekoSettings.hideOnSite,
+        };
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function toggleOnekoForSite() {
+    if (!activeHost) return;
+    const request = ++onekoSettingsRequest;
+    try {
+      const settings = await invoke<OnekoSettings>("oneko_site_visibility_set", {
+        host: activeHost,
+        hide: !onekoSettings.hideOnSite,
+      });
+      if (request === onekoSettingsRequest) onekoSettings = settings;
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   async function toggleSiteAdblock() {
     if (!activeHost) return;
     try {
@@ -176,6 +234,7 @@
       activeTabId = tab.id;
       address = "";
       isLoading = false;
+      await refreshOnekoSettings("");
       await resizeContent();
       focusAddress();
     } catch (error) {
@@ -192,6 +251,7 @@
         activeTabId = tabs[0]?.id ?? "";
       }
       address = activeTab?.url === "about:blank" ? "" : activeTab?.url ?? "";
+      await refreshOnekoSettings(address);
       await resizeContent();
     } catch (error) {
       showError(error);
@@ -207,6 +267,7 @@
       address = tabs.find((tab) => tab.id === tabId)?.url ?? "";
       isLoading = false;
       await refreshAdblockStatus(address);
+      await refreshOnekoSettings(address);
       await resizeContent();
     } catch (error) {
       showError(error);
@@ -366,6 +427,7 @@
       address = activeTab?.url === "about:blank" ? "" : activeTab?.url ?? "";
       isLoading = false;
       await refreshAdblockStatus(address);
+      await refreshOnekoSettings(address);
       await refreshBookmarkStatus(address);
       await resizeContent();
     } catch (error) {
@@ -601,6 +663,7 @@
     let unlistenTabSleep: (() => void) | undefined;
     let unlistenFindOpen: (() => void) | undefined;
     let unlistenFindResult: (() => void) | undefined;
+    let unlistenOneko: (() => void) | undefined;
     let observer: ResizeObserver | undefined;
     let disposed = false;
 
@@ -615,6 +678,7 @@
             isLoading = payload.title !== "finished";
             void refreshBookmarkStatus(payload.url);
             void refreshAdblockStatus(payload.url);
+            void refreshOnekoSettings(payload.url);
           }
         });
         unlistenTitle = await listen<PageEvent>("browser:title", ({ payload }) => {
@@ -647,12 +711,23 @@
             findError = payload.error ?? "";
           },
         );
+        unlistenOneko = await listen<OnekoSettings>("oneko-toggled", ({ payload }) => {
+          onekoSettingsRequest += 1;
+          if (payload.siteHost) {
+            if (payload.siteHost === activeHost) {
+              onekoSettings = { ...onekoSettings, hideOnSite: payload.hideOnSite };
+            }
+            return;
+          }
+          onekoSettings = { ...payload, hideOnSite: onekoSettings.hideOnSite };
+        });
         if (disposed) {
           unlistenNavigation();
           unlistenTitle();
           unlistenTabSleep();
           unlistenFindOpen();
           unlistenFindResult();
+          unlistenOneko();
           return;
         }
         privateMode = await invoke<boolean>("browser_window_mode");
@@ -663,6 +738,7 @@
         activeTabId = await invoke<string | null>("active_tab_id") ?? tabs[0]?.id ?? "";
         address = activeTab?.url === "about:blank" ? "" : activeTab?.url ?? "";
         await refreshAdblockStatus(address);
+        await refreshOnekoSettings(address);
         await refreshBookmarkBar();
         await refreshBookmarkStatus();
         await resizeContent();
@@ -701,6 +777,9 @@
       } else if (modifier && event.key.toLowerCase() === "h") {
         event.preventDefault();
         void openManager("history");
+      } else if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        void toggleOneko();
       } else if (modifier && event.key.toLowerCase() === "j") {
         event.preventDefault();
         void openManager("downloads");
@@ -738,6 +817,7 @@
       unlistenTabSleep?.();
       unlistenFindOpen?.();
       unlistenFindResult?.();
+      unlistenOneko?.();
       observer?.disconnect();
       window.removeEventListener("keydown", onKeydown);
       if (findTimer !== undefined) window.clearTimeout(findTimer);
@@ -858,6 +938,22 @@
     <button class="icon-button library-action" aria-label="Downloads" title="Downloads" onclick={() => void openManager("downloads")}>↓</button>
     <button class="icon-button library-action" aria-label="Passwords" title="Password vault" onclick={() => void openManager("passwords")}>⚿</button>
     <button class="icon-button library-action" aria-label="Privacy settings" title="Privacy settings" onclick={() => void openManager("privacy")}>⚙</button>
+    <button
+      class:oneko-on={onekoSettings.enabled}
+      class="icon-button library-action oneko-button"
+      aria-label={onekoSettings.enabled ? "Turn Oneko cat off" : "Turn Oneko cat on"}
+      aria-pressed={onekoSettings.enabled}
+      title={`Oneko cat ${onekoSettings.enabled ? "on" : "off"} (Ctrl+Shift+K)`}
+      onclick={() => void toggleOneko()}
+    >🐈</button>
+    <button
+      class:site-hidden={onekoSettings.hideOnSite}
+      class="icon-button library-action oneko-site-button"
+      aria-label={onekoSettings.hideOnSite ? `Show Oneko cat on ${activeHost}` : `Hide Oneko cat on ${activeHost}`}
+      title={`${onekoSettings.hideOnSite ? "Show" : "Hide"} Oneko cat on ${activeHost || "this site"}`}
+      disabled={!activeHost}
+      onclick={() => void toggleOnekoForSite()}
+    >⊘</button>
     <button
       class:site-allowed={currentSiteAllowed}
       class="icon-button adblock-button"

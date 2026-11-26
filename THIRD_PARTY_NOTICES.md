@@ -16,6 +16,15 @@ scriptlet resources are not injected.
 
 The application distribution is licensed under GPL-3.0-or-later.
 
+## Oneko cat sprites
+
+The 32 Oneko GIF frames in `src-tauri/resources/oneko/` are reused from
+[`glreno/oneko`](https://github.com/glreno/oneko), whose fork is released under
+the Unlicense. The images are public domain. The behavior is independently
+ported to JavaScript from the fork's state machine; the original Java desktop
+port was written by Werner Randelshofer (2010), and the fork's Java code was
+written by Gerald Reno (2019).
+
 ## uBlock filters
 
 The browser downloads the uBlock filters list from

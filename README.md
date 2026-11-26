@@ -27,6 +27,8 @@ a custom rendering or JavaScript engine.
 - Print and Save as PDF, find-in-page (`Ctrl+F`), WebView2 DevTools (`F12`),
   user scripts, tab sleeping, and an in-app updater with stable and beta
   release channels.
+- Optional Oneko desktop cat with a toolbar toggle, `Ctrl+Shift+K` shortcut,
+  per-site hiding, speed/size controls, and reduced-motion support.
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for implementation details and the
 current roadmap.

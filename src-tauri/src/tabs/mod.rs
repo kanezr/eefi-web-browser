@@ -36,6 +36,18 @@ const TAB_GROUP_COLORS: &[&str] = &[
 
 const DEVTOOLS_F12_SCRIPT: &str = r#"
 document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k' && !event.repeat) {
+    if (window.top !== window) return;
+    event.preventDefault();
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.invoke !== 'function') {
+      console.error('Eefi Browser: Oneko shortcut is unavailable in this frame.');
+      return;
+    }
+    internals.invoke('oneko_toggle')
+      .catch(error => console.error('Eefi Browser: could not toggle the Oneko cat.', error));
+    return;
+  }
   if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'f' && !event.repeat) {
     event.preventDefault();
     const internals = window.__TAURI_INTERNALS__;
@@ -799,9 +811,39 @@ pub fn page_builder(
     WebviewBuilder::new(label, url)
         .devtools(true)
         .initialization_script_for_all_frames(DEVTOOLS_F12_SCRIPT)
-        .on_page_load(move |_, payload| {
+        .initialization_script(crate::oneko::initialization_script())
+        .on_page_load(move |page, payload| {
             let url = payload.url().to_string();
             let finished = matches!(payload.event(), PageLoadEvent::Finished);
+            if finished && !is_http_url(&url) {
+                let page = page.clone();
+                let storage = navigation_storage.clone();
+                let page_url = url.clone();
+                tauri::async_runtime::spawn(async move {
+                    let (settings, host) =
+                        match crate::oneko::settings_for_url(storage, page_url).await {
+                            Ok(settings) => settings,
+                            Err(error) => {
+                                eprintln!("could not load Oneko settings for page: {error}");
+                                return;
+                            }
+                        };
+                    let mut payload = match serde_json::to_value(settings) {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            eprintln!("could not serialize Oneko page settings: {error}");
+                            return;
+                        }
+                    };
+                    if let (Some(host), Some(object)) = (host, payload.as_object_mut()) {
+                        object.insert("siteHost".to_string(), serde_json::Value::String(host));
+                    }
+                    let script = format!("window.__eefiOnekoUpdate?.({payload});");
+                    if let Err(error) = page.eval(&script) {
+                        eprintln!("could not initialize Oneko for page: {error}");
+                    }
+                });
+            }
             let mut title = String::new();
             let load_generation = match navigation_state.0.lock() {
                 Ok(mut data) => {
