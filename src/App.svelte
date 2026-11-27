@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ask, save } from "@tauri-apps/plugin-dialog";
+  import Home from "./Home.svelte";
   import Library from "./Library.svelte";
 
   type Tab = {
@@ -61,6 +62,7 @@
 
   let tabs: Tab[] = $state([]);
   let tabGroups: TabGroup[] = $state([]);
+  let homeTabIds = $state<string[]>([]);
   let activeTabId = $state("");
   let privateMode = $state(false);
   let bookmarksBar: Bookmark[] = $state([]);
@@ -228,10 +230,12 @@
   async function newTab() {
     try {
       if (findOpen) closeFind();
-      if (managerView) await closeManager();
+      managerView = null;
       const tab = await invoke<Tab>("create_tab");
       tabs = [...tabs, tab];
       activeTabId = tab.id;
+      await invoke("set_page_content_visible", { visible: false });
+      homeTabIds = [...homeTabIds.filter((id) => id !== tab.id), tab.id];
       address = "";
       isLoading = false;
       await refreshOnekoSettings("");
@@ -247,10 +251,18 @@
       if (findOpen && tabId === activeTabId) closeFind();
       await invoke<Tab[]>("close_tab", { tabId });
       tabs = await invoke<Tab[]>("list_tabs");
+      homeTabIds = homeTabIds.filter((id) => id !== tabId);
       if (!tabs.some((tab) => tab.id === activeTabId)) {
         activeTabId = tabs[0]?.id ?? "";
       }
-      address = activeTab?.url === "about:blank" ? "" : activeTab?.url ?? "";
+      if (activeTab?.url === "about:blank" && activeTabId && !homeTabIds.includes(activeTabId)) {
+        homeTabIds = [...homeTabIds, activeTabId];
+      }
+      const activeIsHome = homeTabIds.includes(activeTabId) || activeTab?.url === "about:blank";
+      address = activeIsHome ? "" : activeTab?.url ?? "";
+      await invoke("set_page_content_visible", {
+        visible: !managerView && !activeIsHome,
+      });
       await refreshOnekoSettings(address);
       await resizeContent();
     } catch (error) {
@@ -261,10 +273,21 @@
   async function selectTab(tabId: string) {
     try {
       if (findOpen && tabId !== activeTabId) closeFind();
+      const target = tabs.find((tab) => tab.id === tabId);
+      if (target?.url === "about:blank" && !homeTabIds.includes(tabId)) {
+        homeTabIds = [...homeTabIds, tabId];
+      }
+      const showHome = homeTabIds.includes(tabId);
+      if (managerView || showHome) {
+        await invoke("set_page_content_visible", { visible: false });
+      }
       await invoke("activate_tab", { tabId });
       tabs = await invoke<Tab[]>("list_tabs");
       activeTabId = tabId;
-      address = tabs.find((tab) => tab.id === tabId)?.url ?? "";
+      address = showHome ? "" : tabs.find((tab) => tab.id === tabId)?.url ?? "";
+      if (!managerView && !showHome) {
+        await invoke("set_page_content_visible", { visible: true });
+      }
       isLoading = false;
       await refreshAdblockStatus(address);
       await refreshOnekoSettings(address);
@@ -279,6 +302,12 @@
     if (!input || !activeTabId) return;
     try {
       if (browserMenuOpen) await closeBrowserMenu();
+      const wasManagerOpen = managerView !== null;
+      managerView = null;
+      if (wasManagerOpen || homeTabIds.includes(activeTabId)) {
+        await invoke("set_page_content_visible", { visible: true });
+      }
+      homeTabIds = homeTabIds.filter((id) => id !== activeTabId);
       isLoading = true;
       message = "";
       const url = await invoke<string>("navigate", {
@@ -424,8 +453,15 @@
       tabs = await invoke<Tab[]>("list_tabs");
       tabGroups = await invoke<TabGroup[]>("tab_groups_list");
       activeTabId = await invoke<string | null>("active_tab_id") ?? tabs[0]?.id ?? "";
-      address = activeTab?.url === "about:blank" ? "" : activeTab?.url ?? "";
+      homeTabIds = homeTabIds.filter((id) => tabs.some((tab) => tab.id === id));
+      if (activeTab?.url === "about:blank" && activeTabId && !homeTabIds.includes(activeTabId)) {
+        homeTabIds = [...homeTabIds, activeTabId];
+      }
+      address = homeTabIds.includes(activeTabId) ? "" : activeTab?.url ?? "";
       isLoading = false;
+      await invoke("set_page_content_visible", {
+        visible: !managerView && !homeTabIds.includes(activeTabId),
+      });
       await refreshAdblockStatus(address);
       await refreshOnekoSettings(address);
       await refreshBookmarkStatus(address);
@@ -439,7 +475,28 @@
     if (!managerView) return;
     managerView = null;
     try {
-      await invoke("set_page_content_visible", { visible: true });
+      const activeIsHome =
+        homeTabIds.includes(activeTabId) || activeTab?.url === "about:blank";
+      if (activeTab?.url === "about:blank" && !homeTabIds.includes(activeTabId)) {
+        homeTabIds = [...homeTabIds, activeTabId];
+      }
+      await invoke("set_page_content_visible", { visible: !activeIsHome });
+      await resizeContent();
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function showHomePage() {
+    if (!activeTabId) return;
+    try {
+      if (findOpen) closeFind();
+      if (browserMenuOpen) await closeBrowserMenu();
+      managerView = null;
+      await invoke("set_page_content_visible", { visible: false });
+      homeTabIds = [...homeTabIds.filter((id) => id !== activeTabId), activeTabId];
+      address = "";
+      isLoading = false;
       await resizeContent();
     } catch (error) {
       showError(error);
@@ -448,12 +505,21 @@
 
   async function runAction(action: "go_back" | "go_forward" | "reload" | "stop" | "go_home") {
     if (!activeTabId) return;
+    if (action === "go_home") {
+      await showHomePage();
+      return;
+    }
     try {
       if (browserMenuOpen) await closeBrowserMenu();
+      if (homeTabIds.includes(activeTabId)) {
+        if (activeTab?.url === "about:blank") return;
+        homeTabIds = homeTabIds.filter((id) => id !== activeTabId);
+        address = activeTab?.url ?? "";
+        await invoke("set_page_content_visible", { visible: true });
+      }
       await invoke(action, { tabId: activeTabId });
-      if (action === "reload" || action === "go_home") isLoading = true;
+      if (action === "reload") isLoading = true;
       if (action === "stop") isLoading = false;
-      if (action === "go_home") address = "https://www.google.com/";
     } catch (error) {
       showError(error);
     }
@@ -736,7 +802,11 @@
         tabs = await invoke<Tab[]>("restore_session");
         tabGroups = await invoke<TabGroup[]>("tab_groups_list");
         activeTabId = await invoke<string | null>("active_tab_id") ?? tabs[0]?.id ?? "";
-        address = activeTab?.url === "about:blank" ? "" : activeTab?.url ?? "";
+        if (activeTab?.url === "about:blank") {
+          homeTabIds = [activeTab.id];
+          await invoke("set_page_content_visible", { visible: false });
+        }
+        address = homeTabIds.includes(activeTabId) ? "" : activeTab?.url ?? "";
         await refreshAdblockStatus(address);
         await refreshOnekoSettings(address);
         await refreshBookmarkBar();
@@ -826,7 +896,14 @@
 </script>
 
 <svelte:head>
-  <title>{privateMode ? "Private - " : ""}{activeTab?.title ? `${activeTab.title} - Eefi Browser` : "Eefi Browser"}</title>
+  <title>
+    {privateMode ? "Private - " : ""}
+    {homeTabIds.includes(activeTabId)
+      ? "Home - Eefi Browser"
+      : activeTab?.title
+        ? `${activeTab.title} - Eefi Browser`
+        : "Eefi Browser"}
+  </title>
 </svelte:head>
 
 <svelte:window onpointerdown={closeMenuFromOutside} />
@@ -1072,6 +1149,18 @@
         onClose={() => void closeManager()}
         onBookmarksChange={() => void refreshBookmarkBar()}
         onGroupsChange={() => void refreshTabGroups()}
+      />
+    {:else if homeTabIds.includes(activeTabId)}
+      <Home
+        bookmarks={bookmarksBar}
+        onSearch={(query) => {
+          address = query;
+          void navigate();
+        }}
+        onNavigate={(url) => {
+          address = url;
+          void navigate();
+        }}
       />
     {/if}
   </div>

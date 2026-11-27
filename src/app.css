@@ -404,7 +404,7 @@ input:focus-visible {
 .content {
   position: absolute;
   inset: 128px 0 0;
-  background: #fff;
+  background: var(--surface);
 }
 
 .browser.menu-open .content {

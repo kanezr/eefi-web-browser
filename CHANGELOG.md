@@ -8,6 +8,9 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 
 ### Added
 
+- Added a local Home page for new and blank tabs, with a search box and
+  shortcuts to bookmarks on the bookmarks bar. The Home button now opens this
+  page instead of navigating to Google.
 - Added automated version-format tests to CI for stable versions and arbitrary
   valid SemVer prerelease labels.
 
