@@ -26,7 +26,5 @@ updates:
   - package-ecosystem: cargo
     directory: /src-tauri
     schedule:
-      interval: monthly
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 3
+      interval: weekly
+    open-pull-requests-limit: 10
