@@ -10,6 +10,7 @@
     "allow-toggle-page-devtools",
     "allow-open-page-print-dialog",
     "allow-open-find-bar",
+    "allow-open-reopen-closed-tab",
     "allow-oneko-settings-get",
     "allow-oneko-toggle"
   ]

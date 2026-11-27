@@ -8,6 +8,7 @@ permissions = [
   "allow-open-page-print-dialog",
   "allow-open-find-bar",
   "allow-find-in-page",
+  "allow-reopen-closed-tab",
   "allow-toggle-devtools",
   "allow-print-page",
   "allow-save-page-as-pdf",

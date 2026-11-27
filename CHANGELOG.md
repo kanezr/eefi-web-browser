@@ -4,6 +4,14 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Added **Reopen closed tab** to the Browser menu and the `Ctrl+Shift+T`
+  shortcut. Recently closed tabs are kept per window for the current session,
+  including their URL, title, and tab group.
+
 ## [0.1.2] - 2026-11-27
 
 ### Added

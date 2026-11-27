@@ -30,12 +30,24 @@ const DEFAULT_TAB_SLEEP_TIMEOUT_SECONDS: u64 = 900;
 const TAB_SLEEP_TIMEOUT_UNINITIALIZED: u64 = u64::MAX;
 const TAB_SLEEP_SCAN_INTERVAL_SECONDS: u64 = 5;
 const TAB_SLEEP_TIMEOUT_OPTIONS: &[u64] = &[0, 60, 300, 900, 1800, 3600];
+const MAX_CLOSED_TABS: usize = 10;
 const TAB_GROUP_COLORS: &[&str] = &[
     "#4f7ff0", "#8d63d8", "#159b9a", "#2d9a65", "#d49a2b", "#e17a32", "#d75059", "#788397",
 ];
 
 const DEVTOOLS_F12_SCRIPT: &str = r#"
 document.addEventListener('keydown', event => {
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 't' && !event.repeat) {
+    event.preventDefault();
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.invoke !== 'function') {
+      console.error('Eefi Browser: reopen-closed-tab shortcut is unavailable in this frame.');
+      return;
+    }
+    internals.invoke('open_reopen_closed_tab')
+      .catch(error => console.error('Eefi Browser: could not reopen the last closed tab.', error));
+    return;
+  }
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k' && !event.repeat) {
     if (window.top !== window) return;
     event.preventDefault();
@@ -129,6 +141,7 @@ struct TabSleepEvent {
 #[derive(Default)]
 struct BrowserData {
     tabs: Vec<TabInfo>,
+    closed_tabs: Vec<TabInfo>,
     inactive_since: HashMap<String, Instant>,
     active_downloads: HashSet<String>,
     groups: Vec<TabGroup>,
@@ -192,6 +205,7 @@ impl BrowserState {
             .lock()
             .map_err(|_| "browser tab state lock is poisoned".to_string())?;
         data.tabs.push(initial_tab);
+        data.closed_tabs.clear();
         data.groups = groups;
         data.active_tab_id = Some("1".to_string());
         data.next_id = 2;
@@ -629,6 +643,7 @@ pub async fn detach_tab_to_new_window(
         download_location.inner(),
         adblock_service.inner(),
         privacy_service.inner(),
+        false,
     ) {
         close_secondary_window(&app, window_states.inner(), &target_label);
         return Err(error);
@@ -1332,6 +1347,15 @@ pub fn open_find_bar(app: AppHandle, webview: Webview<Wry>) -> Result<(), String
 }
 
 #[tauri::command]
+pub fn open_reopen_closed_tab(app: AppHandle, webview: Webview<Wry>) -> Result<(), String> {
+    if !is_page_webview_label(webview.label()) {
+        return Err("reopen-closed-tab can only be requested by a page webview".to_string());
+    }
+    app.emit_to(webview.window().label(), "browser:reopen-closed-tab", ())
+        .map_err(|error| format!("could not request reopening a closed tab: {error}"))
+}
+
+#[tauri::command]
 pub async fn find_in_page(
     app: AppHandle,
     webview: Webview<Wry>,
@@ -1998,6 +2022,65 @@ pub fn set_page_content_visible(
 }
 
 #[tauri::command]
+pub async fn reopen_closed_tab(
+    app: AppHandle,
+    webview: Webview<Wry>,
+    normal_state: State<'_, BrowserState>,
+    window_states: State<'_, BrowserWindowStates>,
+    storage: State<'_, StorageService>,
+    download_location: State<'_, DownloadLocation>,
+    adblock: State<'_, AdblockService>,
+    privacy: State<'_, PrivacyService>,
+) -> Result<Option<TabInfo>, String> {
+    let state = state_for_window(
+        webview.window().label(),
+        normal_state.inner(),
+        window_states.inner(),
+    )?;
+    let (closed_tab, group_id) = {
+        let mut data = state
+            .0
+            .lock()
+            .map_err(|_| "browser tab state lock is poisoned".to_string())?;
+        let Some(closed_tab) = data.closed_tabs.pop() else {
+            return Ok(None);
+        };
+        let group_id = closed_tab
+            .group_id
+            .as_ref()
+            .filter(|group_id| data.groups.iter().any(|group| &group.id == *group_id))
+            .cloned();
+        (closed_tab, group_id)
+    };
+    let url = match safe_session_url(&closed_tab.url) {
+        Ok(url) => url,
+        Err(error) => {
+            restore_closed_tab(&state, closed_tab)?;
+            return Err(error);
+        }
+    };
+    match create_tab_internal(
+        app,
+        state.clone(),
+        storage.inner().clone(),
+        download_location.inner().clone(),
+        adblock.inner().clone(),
+        privacy.inner().clone(),
+        url,
+        closed_tab.title.chars().take(512).collect(),
+        group_id,
+    )
+    .await
+    {
+        Ok(tab) => Ok(Some(tab)),
+        Err(error) => {
+            restore_closed_tab(&state, closed_tab)?;
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 pub async fn create_tab(
     app: AppHandle,
     webview: Webview<Wry>,
@@ -2301,6 +2384,7 @@ pub async fn close_tab(
             &download_location,
             &adblock,
             &privacy,
+            true,
         )
     })
     .await
@@ -2315,9 +2399,10 @@ fn close_tab_for_state(
     download_location: &DownloadLocation,
     adblock: &AdblockService,
     privacy: &PrivacyService,
+    should_remember_closed_tab: bool,
 ) -> Result<Vec<TabInfo>, String> {
     validate_tab_id(&tab_id)?;
-    let (was_active, was_sleeping, next_active, remaining) = {
+    let (was_active, was_sleeping, next_active, remaining, closed_tab) = {
         let mut data = state
             .0
             .lock()
@@ -2341,6 +2426,7 @@ fn close_tab_for_state(
             removed.sleeping,
             data.active_tab_id.clone(),
             data.tabs.clone(),
+            removed,
         )
     };
     if !was_sleeping {
@@ -2349,6 +2435,13 @@ fn close_tab_for_state(
             .ok_or_else(|| "tab webview does not exist".to_string())?;
         view.close()
             .map_err(|error| format!("could not close tab: {error}"))?;
+    }
+    if should_remember_closed_tab {
+        let mut data = state
+            .0
+            .lock()
+            .map_err(|_| "browser tab state lock is poisoned".to_string())?;
+        remember_closed_tab(&mut data, closed_tab);
     }
     if was_active {
         if let Some(next_id) = next_active {
@@ -2365,6 +2458,22 @@ fn close_tab_for_state(
     }
     queue_session_save(app.clone(), state.clone());
     Ok(remaining)
+}
+
+fn remember_closed_tab(data: &mut BrowserData, tab: TabInfo) {
+    if data.closed_tabs.len() == MAX_CLOSED_TABS {
+        data.closed_tabs.remove(0);
+    }
+    data.closed_tabs.push(tab);
+}
+
+fn restore_closed_tab(state: &BrowserState, tab: TabInfo) -> Result<(), String> {
+    let mut data = state
+        .0
+        .lock()
+        .map_err(|_| "browser tab state lock is poisoned".to_string())?;
+    remember_closed_tab(&mut data, tab);
+    Ok(())
 }
 
 #[tauri::command]
@@ -3024,9 +3133,9 @@ fn emit_download_changed(app: &AppHandle) {
 mod tests {
     use super::{
         assign_tab_to_group, idle_tabs_past_timeout, is_page_webview_label,
-        parse_tab_sleep_timeout, rollback_tab_metadata, validate_find_query,
+        parse_tab_sleep_timeout, remember_closed_tab, rollback_tab_metadata, validate_find_query,
         validate_group_details, validate_pdf_output_path, validate_tab_sleep_timeout, BrowserData,
-        BrowserState, TabGroup, TabInfo, TabSleepPolicy,
+        BrowserState, TabGroup, TabInfo, TabSleepPolicy, MAX_CLOSED_TABS,
     };
     use std::{
         collections::{HashMap, HashSet},
@@ -3047,6 +3156,7 @@ mod tests {
     fn failed_tab_creation_restores_previous_active_tab() {
         let mut data = BrowserData {
             tabs: vec![tab("1"), tab("2")],
+            closed_tabs: Vec::new(),
             inactive_since: HashMap::new(),
             active_downloads: HashSet::new(),
             groups: Vec::new(),
@@ -3099,6 +3209,7 @@ mod tests {
     fn failed_tab_creation_does_not_override_a_newer_active_tab() {
         let mut data = BrowserData {
             tabs: vec![tab("1"), tab("2"), tab("3")],
+            closed_tabs: Vec::new(),
             inactive_since: HashMap::new(),
             active_downloads: HashSet::new(),
             groups: Vec::new(),
@@ -3127,6 +3238,7 @@ mod tests {
     fn tab_groups_assign_and_remove_tabs_with_validation() {
         let mut data = BrowserData {
             tabs: vec![tab("1"), tab("2")],
+            closed_tabs: Vec::new(),
             inactive_since: HashMap::new(),
             active_downloads: HashSet::new(),
             groups: vec![TabGroup {
@@ -3188,6 +3300,7 @@ mod tests {
         let now = Instant::now();
         let mut data = BrowserData {
             tabs: vec![tab("1"), tab("2"), tab("3"), tab("4"), tab("5")],
+            closed_tabs: Vec::new(),
             inactive_since: HashMap::from([
                 ("1".to_string(), now - Duration::from_secs(120)),
                 ("2".to_string(), now - Duration::from_secs(120)),
@@ -3235,6 +3348,53 @@ mod tests {
         assert_eq!(
             private.0.lock().expect("lock private state").tabs[0].title,
             "Private page"
+        );
+    }
+
+    #[test]
+    fn recently_closed_tabs_are_reopened_in_reverse_close_order_and_bounded() {
+        let mut data = BrowserData::default();
+        remember_closed_tab(&mut data, tab("1"));
+        remember_closed_tab(&mut data, tab("2"));
+
+        assert_eq!(
+            data.closed_tabs.pop().expect("most recent closed tab").id,
+            "2"
+        );
+        assert_eq!(data.closed_tabs.pop().expect("older closed tab").id, "1");
+
+        for id in 0..=MAX_CLOSED_TABS {
+            remember_closed_tab(&mut data, tab(&id.to_string()));
+        }
+        assert_eq!(data.closed_tabs.len(), MAX_CLOSED_TABS);
+        assert_eq!(
+            data.closed_tabs.first().map(|tab| tab.id.as_str()),
+            Some("1")
+        );
+        assert_eq!(
+            data.closed_tabs.last().map(|tab| tab.id.as_str()),
+            Some("10")
+        );
+    }
+
+    #[test]
+    fn private_window_closed_tabs_remain_in_their_window_state() {
+        let normal = BrowserState::default();
+        let private = BrowserState::for_window("private-1".to_string(), true);
+        remember_closed_tab(
+            &mut private.0.lock().expect("lock private state"),
+            tab("private"),
+        );
+
+        assert!(normal
+            .0
+            .lock()
+            .expect("lock normal state")
+            .closed_tabs
+            .is_empty());
+        assert_eq!(
+            private.0.lock().expect("lock private state").closed_tabs[0].id,
+            "private"
         );
     }
 

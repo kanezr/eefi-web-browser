@@ -420,6 +420,35 @@
     await newTab();
   }
 
+  async function reopenClosedTab() {
+    try {
+      if (browserMenuOpen) await closeBrowserMenu();
+      if (findOpen) closeFind();
+      managerView = null;
+      const tab = await invoke<Tab | null>("reopen_closed_tab");
+      if (!tab) {
+        showError("There are no recently closed tabs to reopen.");
+        return;
+      }
+      tabs = await invoke<Tab[]>("list_tabs");
+      activeTabId = tab.id;
+      const isHome = tab.url === "about:blank";
+      homeTabIds = isHome
+        ? [...homeTabIds.filter((id) => id !== tab.id), tab.id]
+        : homeTabIds.filter((id) => id !== tab.id);
+      address = isHome ? "" : tab.url;
+      isLoading = !isHome;
+      await invoke("set_page_content_visible", { visible: !isHome });
+      await refreshAdblockStatus(address);
+      await refreshOnekoSettings(address);
+      await refreshBookmarkStatus(address);
+      await resizeContent();
+      if (isHome) focusAddress();
+    } catch (error) {
+      showError(error);
+    }
+  }
+
   async function openPrivateWindow() {
     try {
       await closeBrowserMenu();
@@ -729,6 +758,7 @@
     let unlistenTabSleep: (() => void) | undefined;
     let unlistenFindOpen: (() => void) | undefined;
     let unlistenFindResult: (() => void) | undefined;
+    let unlistenReopenClosedTab: (() => void) | undefined;
     let unlistenOneko: (() => void) | undefined;
     let observer: ResizeObserver | undefined;
     let disposed = false;
@@ -761,6 +791,10 @@
           },
         );
         unlistenFindOpen = await listen("browser:find-open", () => openFind());
+        unlistenReopenClosedTab = await listen(
+          "browser:reopen-closed-tab",
+          () => void reopenClosedTab(),
+        );
         unlistenFindResult = await listen<FindResult>(
           "browser:find-result",
           ({ payload }) => {
@@ -793,6 +827,7 @@
           unlistenTabSleep();
           unlistenFindOpen();
           unlistenFindResult();
+          unlistenReopenClosedTab();
           unlistenOneko();
           return;
         }
@@ -832,6 +867,9 @@
       } else if (modifier && event.key.toLowerCase() === "l") {
         event.preventDefault();
         focusAddress();
+      } else if (modifier && event.shiftKey && !event.altKey && event.key.toLowerCase() === "t") {
+        event.preventDefault();
+        void reopenClosedTab();
       } else if (modifier && event.key.toLowerCase() === "t") {
         event.preventDefault();
         void newTab();
@@ -887,6 +925,7 @@
       unlistenTabSleep?.();
       unlistenFindOpen?.();
       unlistenFindResult?.();
+      unlistenReopenClosedTab?.();
       unlistenOneko?.();
       observer?.disconnect();
       window.removeEventListener("keydown", onKeydown);
@@ -1060,6 +1099,9 @@
       {#if browserMenuOpen}
         <div class="browser-menu-panel" role="menu" aria-label="Browser menu">
           <button role="menuitem" onclick={() => void newTabFromMenu()}>New tab</button>
+          <button role="menuitem" onclick={() => void reopenClosedTab()}>
+            Reopen closed tab (Ctrl+Shift+T)
+          </button>
           {#if !privateMode}
             <button role="menuitem" onclick={() => void openBrowserWindow()}>New window</button>
             <button role="menuitem" onclick={() => void openPrivateWindow()}>New private window</button>
