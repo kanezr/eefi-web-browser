@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v7
@@ -85,10 +87,78 @@ jobs:
           $zipPath = Join-Path $env:GITHUB_WORKSPACE "eefi-browser-$version-windows-x64.zip"
           Compress-Archive -Path (Join-Path $packageDirectory "*") -DestinationPath $zipPath
 
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          if ($tagVersion -ne $version) {
+            throw "Release tag version '$tagVersion' does not match VERSION '$version'."
+          }
+
+          $changelogLines = Get-Content CHANGELOG.md
+          $headingPattern = '^## \[' + [regex]::Escape($version) + '\](?:\s|$)'
+          $sectionStart = -1
+          for ($i = 0; $i -lt $changelogLines.Length; $i++) {
+            if ($changelogLines[$i] -match $headingPattern) {
+              $sectionStart = $i
+              break
+            }
+          }
+          if ($sectionStart -lt 0) {
+            throw "CHANGELOG.md has no release section for version '$version'."
+          }
+
+          $sectionEnd = $changelogLines.Length
+          for ($i = $sectionStart + 1; $i -lt $changelogLines.Length; $i++) {
+            if ($changelogLines[$i] -match '^## \[') {
+              $sectionEnd = $i
+              break
+            }
+          }
+          $changelogEntries = [System.Collections.Generic.List[string]]::new()
+          for ($i = $sectionStart + 1; $i -lt $sectionEnd; $i++) {
+            $changelogEntries.Add($changelogLines[$i])
+          }
+          $changelog = ($changelogEntries -join "`n").Trim()
+          if (-not $changelog) {
+            throw "CHANGELOG.md release section for '$version' is empty."
+          }
+
+          $previousTag = git describe --tags --abbrev=0 "$env:GITHUB_SHA^"
+          if ($LASTEXITCODE -ne 0 -or -not $previousTag) {
+            throw "Could not find the previous Git tag for '$env:GITHUB_REF_NAME'."
+          }
+          $compareUrl = "https://github.com/$env:GITHUB_REPOSITORY/compare/$previousTag...$env:GITHUB_REF_NAME"
+          $notes = @"
+          **eefi Browser v$version**
+
+          > This is an early-development build. Expect bugs and features to be missing.
+          > If you have any issues, report it in the [GitHub issues page](https://github.com/$env:GITHUB_REPOSITORY/issues) or in the [discord server](https://discord.gg/unmX7BXuB8).
+
+          ### Changelog
+
+          $changelog
+
+          ### Requirement
+          Microsoft Edge WebView2 Evergreen Runtime is required. It is included on most current Windows 10 and Windows 11 installations. If eefi Browser does not start, install the Evergreen Runtime from: https://developer.microsoft.com/microsoft-edge/webview2/
+
+          ### Downloads
+          | Platform | Download |
+          | --- | --- |
+          | Windows x64 .EXE | ``eefi-browser-$version-windows-x64.exe`` |
+          | Windows x64 .ZIP | ``eefi-browser-$version-windows-x64.zip`` |
+
+          **Full changelog:** [$previousTag...$env:GITHUB_REF_NAME]($compareUrl)
+          "@
+          $notesPath = Join-Path $env:GITHUB_WORKSPACE "release-notes.md"
+          [System.IO.File]::WriteAllText($notesPath, $notes.Trim() + "`n", [System.Text.UTF8Encoding]::new($false))
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          generate_release_notes: true
+          name: eefi Browser ${{ github.ref_name }}
+          body_path: release-notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             eefi-browser-*-windows-x64.zip
