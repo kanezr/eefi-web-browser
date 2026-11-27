@@ -22,7 +22,7 @@ tauri-build = { version = "2", features = [] }
 adblock = { version = "0.13.6", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
 futures-util = "0.3"
 psl = "2"
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
