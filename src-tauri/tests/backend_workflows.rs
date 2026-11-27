@@ -235,6 +235,6 @@ fn storage_service_upgrades_legacy_profile_before_repository_use() {
     })
     .expect("use repositories through migrated profile");
 
-    assert_eq!(schema_version, 7);
+    assert_eq!(schema_version, 6);
     assert_eq!(value.as_deref(), Some("migrated"));
 }

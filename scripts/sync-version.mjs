@@ -1,15 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeVersion } from "./version.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const version = (await readFile(path.join(root, "VERSION"), "utf8")).trim();
-const semverPattern =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
-
-if (!semverPattern.test(version)) {
-  throw new Error("VERSION must contain a valid SemVer version without a leading 'v'.");
-}
+const version = normalizeVersion(await readFile(path.join(root, "VERSION"), "utf8"));
 
 async function readJson(relativePath) {
   const content = await readFile(path.join(root, relativePath), "utf8");

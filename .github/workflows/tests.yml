@@ -26,6 +26,9 @@ jobs:
       - name: Synchronize version metadata
         run: node scripts/sync-version.mjs
 
+      - name: Test version normalization
+        run: npm run test:version
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 

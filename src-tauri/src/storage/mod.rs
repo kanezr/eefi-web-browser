@@ -225,17 +225,18 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             )
             .map_err(|error| format!("could not update browser database schema: {error}"))?;
     }
-    if version < 7 {
-        connection
-            .execute_batch(
-                "BEGIN;
-                CREATE TABLE oneko_hidden_sites (
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS oneko_hidden_sites (
                     host TEXT PRIMARY KEY CHECK(length(host) BETWEEN 1 AND 253)
-                );
-                PRAGMA user_version = 7;
-                COMMIT;",
-            )
-            .map_err(|error| format!("could not update browser database schema: {error}"))?;
+                );",
+        )
+        .map_err(|error| format!("could not create hidden-site settings: {error}"))?;
+    if version > 6 {
+        // Version 7 only added this table; reset the marker so version-6 builds can reopen the profile.
+        connection
+            .pragma_update(None, "user_version", 6)
+            .map_err(|error| format!("could not restore compatible database version: {error}"))?;
     }
     Ok(())
 }
@@ -358,7 +359,7 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read database version");
-        assert_eq!(version, 7);
+        assert_eq!(version, 6);
 
         connection
             .execute(
@@ -420,7 +421,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("check site allowlist table");
-        assert_eq!(version, 7);
+        assert_eq!(version, 6);
         assert_eq!(table_exists, 1);
         let passwords_table_exists: i64 = connection
             .query_row(
@@ -465,7 +466,7 @@ mod tests {
     }
 
     #[test]
-    fn existing_version_seven_database_is_accepted() {
+    fn existing_version_seven_database_is_downgraded_for_older_browser_compatibility() {
         let directory = tempfile::tempdir().expect("temporary database directory");
         let path = directory.path().join("version-seven.sqlite3");
         let connection = Connection::open(&path).expect("create version-seven database");
@@ -475,6 +476,7 @@ mod tests {
                  CREATE TABLE oneko_hidden_sites (
                     host TEXT PRIMARY KEY CHECK(length(host) BETWEEN 1 AND 253)
                  );
+                 INSERT INTO oneko_hidden_sites(host) VALUES ('example.com');
                  PRAGMA user_version = 7;",
             )
             .expect("create version-seven schema");
@@ -484,7 +486,15 @@ mod tests {
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read database version");
-        assert_eq!(version, 7);
+        assert_eq!(version, 6);
+        let hidden_sites_exists: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM oneko_hidden_sites WHERE host = 'example.com'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("check stored hidden-site setting");
+        assert_eq!(hidden_sites_exists, 1);
     }
 
     #[test]
@@ -574,7 +584,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         for worker in workers {
-            assert_eq!(worker.join().expect("migration worker"), 7);
+            assert_eq!(worker.join().expect("migration worker"), 6);
         }
     }
 }

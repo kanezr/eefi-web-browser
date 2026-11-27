@@ -4,14 +4,36 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.2] - 2026-11-26
+## [Unreleased]
+
+### Added
+
+- Added automated version-format tests to CI for stable versions and arbitrary
+  valid SemVer prerelease labels.
+
+### Changed
+
+- `VERSION` now synchronizes valid SemVer prerelease labels such as `alpha`,
+  `beta`, or custom labels without requiring a specific channel name. Keep the
+  `v` prefix for Git release tags only; do not put it in `VERSION`.
+- Keep SQLite's schema marker at version 6 for compatibility with older browser
+  builds. Future database changes must remain additive and must not advance the
+  marker.
+
+### Fixed
+
+- Databases previously marked as schema version 7 are reopened with the
+  compatible version-6 marker. Existing site settings remain intact.
+
+## [0.1.2-oneko] - 2026-11-26
 
 ### Added
 
 - Added the optional Oneko cat overlay with a toolbar toggle, `Ctrl+Shift+K`
   shortcut, per-site hiding, speed/size settings, and reduced-motion support.
-- Added integration tests
-- Added security policy
+- Added Rust backend integration tests for navigation/storage workflows,
+  download recovery, session persistence, and legacy database migration.
+- Added a security policy with private vulnerability-reporting guidance.
 
 ## [0.1.1] - 2026-11-26
 

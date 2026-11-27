@@ -116,12 +116,17 @@ npm ci
 npm run tauri -- dev
 ```
 
-The root `VERSION` file is the source of truth for the application version. Use
-SemVer without a leading `v` (for example `0.2.0` or `0.3.0-beta.1`). The npm
-development, check, build, and Tauri commands synchronize the package manifests
-and lockfiles automatically; run `node scripts/sync-version.mjs` before `npm
-ci` or standalone Cargo commands after changing `VERSION`. Release tags must
-still be created manually as `v<VERSION>`.
+The root `VERSION` file is the source of truth for the application version.
+Use a valid SemVer value without a leading `v`, such as `0.2.0`,
+`0.3.0-beta.1`, `0.3.0-alpha.1`, or `0.3.0-custom-label.2`. Prerelease labels
+can use any valid SemVer identifiers; package manifests use the exact value
+from `VERSION`. Do not prefix the value in `VERSION` with `v`; that prefix is
+used only when creating the Git release tag. The npm development, check, build,
+and Tauri commands synchronize package manifests and lockfiles automatically.
+Run `node scripts/sync-version.mjs` before `npm ci` or standalone Cargo commands
+after changing `VERSION`. Release tags must still be created manually as
+`v<VERSION>` (for example, `VERSION=0.3.0-custom-label.2` uses the tag
+`v0.3.0-custom-label.2`).
 
 The development command starts Vite. To type-check and build the frontend:
 
