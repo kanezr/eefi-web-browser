@@ -747,6 +747,7 @@ fn create_secondary_window(
             .map_err(|error| format!("could not create browser tab: {error}"))?;
         eprintln!("[browser-window:{label}] initial page webview attached");
         adblock::attach_to_webview(&page, adblock_service, privacy_service)?;
+        attach_url_history_tracking(app.clone(), &page, state.clone())?;
         if initial_tab.url != "about:blank" {
             let target = safe_session_url(&initial_tab.url)?;
             page.navigate(target)
@@ -1353,6 +1354,117 @@ pub fn open_reopen_closed_tab(app: AppHandle, webview: Webview<Wry>) -> Result<(
     }
     app.emit_to(webview.window().label(), "browser:reopen-closed-tab", ())
         .map_err(|error| format!("could not request reopening a closed tab: {error}"))
+}
+
+pub fn attach_url_history_tracking(
+    app: AppHandle,
+    webview: &Webview<Wry>,
+    state: BrowserState,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        use std::sync::mpsc;
+
+        use webview2_com::{take_pwstr, HistoryChangedEventHandler};
+        use windows::core::PWSTR;
+
+        let label = webview.label().to_string();
+        let window_label = webview.window().label().to_string();
+        let (result_sender, result_receiver) = mpsc::sync_channel(1);
+        webview
+            .with_webview(move |platform| {
+                let result = (|| -> Result<(), String> {
+                    unsafe {
+                        let core = platform
+                            .controller()
+                            .CoreWebView2()
+                            .map_err(|error| format!("could not access WebView2: {error}"))?;
+                        let event_app = app.clone();
+                        let event_state = state.clone();
+                        let event_label = label.clone();
+                        let event_window_label = window_label.clone();
+                        let handler = HistoryChangedEventHandler::create(Box::new(
+                            move |sender, _args| {
+                                let Some(core) = sender else {
+                                    return Ok(());
+                                };
+                                let mut source = PWSTR::null();
+                                core.Source(&mut source)?;
+                                let source = take_pwstr(source);
+                                let Ok(url) = Url::parse(&source) else {
+                                    return Ok(());
+                                };
+                                if !is_http_url(url.as_str()) {
+                                    return Ok(());
+                                }
+                                let url = url.to_string();
+                                let tab_id = {
+                                    let mut data = match event_state.0.lock() {
+                                        Ok(data) => data,
+                                        Err(_) => {
+                                            eprintln!(
+                                                "browser tab state lock poisoned while handling URL change"
+                                            );
+                                            return Ok(());
+                                        }
+                                    };
+                                    let Some(tab_id) = data
+                                        .tabs
+                                        .iter()
+                                        .find(|tab| event_state.page_label(&tab.id) == event_label)
+                                        .map(|tab| tab.id.clone())
+                                    else {
+                                        return Ok(());
+                                    };
+                                    match update_tab_url(&mut data, &tab_id, url.clone()) {
+                                        Ok(true) => tab_id,
+                                        Ok(false) => return Ok(()),
+                                        Err(error) => {
+                                            eprintln!("could not update tab URL: {error}");
+                                            return Ok(());
+                                        }
+                                    }
+                                };
+                                queue_session_save(event_app.clone(), event_state.clone());
+                                if let Err(error) = event_app.emit_to(
+                                    &event_window_label,
+                                    "browser:url-changed",
+                                    PageEvent {
+                                        tab_id,
+                                        url,
+                                        title: None,
+                                    },
+                                ) {
+                                    eprintln!(
+                                        "could not notify browser chrome of URL change: {error}"
+                                    );
+                                }
+                                Ok(())
+                            },
+                        ));
+                        let mut token = 0;
+                        core.add_HistoryChanged(&handler, &mut token)
+                            .map_err(|error| {
+                                format!("could not register WebView2 history handler: {error}")
+                            })?;
+                    }
+                    Ok(())
+                })();
+                if result_sender.send(result).is_err() {
+                    eprintln!("could not return WebView2 URL tracking setup result");
+                }
+            })
+            .map_err(|error| format!("could not access native webview: {error}"))?;
+        result_receiver.recv().map_err(|error| {
+            format!("could not receive WebView2 URL tracking setup result: {error}")
+        })?
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (app, webview, state);
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -2220,6 +2332,12 @@ fn create_tab_blocking(
         }
         return Err(error);
     }
+    if let Err(error) = attach_url_history_tracking(app.clone(), &view, state.clone()) {
+        if let Err(close_error) = view.close() {
+            eprintln!("could not close browser tab after URL tracking setup failed: {close_error}");
+        }
+        return Err(error);
+    }
     match state.0.lock() {
         Ok(mut data) => {
             if let Some(previous_id) = previous_active.as_ref() {
@@ -2465,6 +2583,24 @@ fn remember_closed_tab(data: &mut BrowserData, tab: TabInfo) {
         data.closed_tabs.remove(0);
     }
     data.closed_tabs.push(tab);
+}
+
+fn update_tab_url(data: &mut BrowserData, tab_id: &str, url: String) -> Result<bool, String> {
+    validate_tab_id(tab_id)?;
+    if !is_http_url(&url) {
+        return Err("page URL must use HTTP or HTTPS".to_string());
+    }
+    let tab = data
+        .tabs
+        .iter_mut()
+        .find(|tab| tab.id == tab_id)
+        .ok_or_else(|| "tab does not exist".to_string())?;
+    if tab.url == url {
+        return Ok(false);
+    }
+    tab.url = url;
+    data.revision = data.revision.saturating_add(1);
+    Ok(true)
 }
 
 fn restore_closed_tab(state: &BrowserState, tab: TabInfo) -> Result<(), String> {
@@ -2990,6 +3126,14 @@ fn restore_sleeping_tab_webview(
         }
         return Err(error);
     }
+    if let Err(error) = attach_url_history_tracking(app.clone(), &view, state.clone()) {
+        if let Err(close_error) = view.close() {
+            eprintln!(
+                "could not close restored tab after URL tracking setup failed: {close_error}"
+            );
+        }
+        return Err(error);
+    }
     if url.as_str() != "about:blank" {
         if let Err(error) = view.navigate(url) {
             if let Err(close_error) = view.close() {
@@ -3133,9 +3277,10 @@ fn emit_download_changed(app: &AppHandle) {
 mod tests {
     use super::{
         assign_tab_to_group, idle_tabs_past_timeout, is_page_webview_label,
-        parse_tab_sleep_timeout, remember_closed_tab, rollback_tab_metadata, validate_find_query,
-        validate_group_details, validate_pdf_output_path, validate_tab_sleep_timeout, BrowserData,
-        BrowserState, TabGroup, TabInfo, TabSleepPolicy, MAX_CLOSED_TABS,
+        parse_tab_sleep_timeout, remember_closed_tab, rollback_tab_metadata, update_tab_url,
+        validate_find_query, validate_group_details, validate_pdf_output_path,
+        validate_tab_sleep_timeout, BrowserData, BrowserState, TabGroup, TabInfo, TabSleepPolicy,
+        MAX_CLOSED_TABS,
     };
     use std::{
         collections::{HashMap, HashSet},
@@ -3374,6 +3519,34 @@ mod tests {
         assert_eq!(
             data.closed_tabs.last().map(|tab| tab.id.as_str()),
             Some("10")
+        );
+    }
+
+    #[test]
+    fn tab_url_updates_preserve_full_paths_and_query_parameters() {
+        let mut data = BrowserData::default();
+        data.tabs.push(tab("1"));
+        let video_url = "https://www.youtube.com/watch?v=video123&list=playlist456".to_string();
+
+        assert!(update_tab_url(&mut data, "1", video_url.clone()).expect("update URL"));
+        assert_eq!(data.tabs[0].url, video_url);
+        assert!(!update_tab_url(&mut data, "1", video_url).expect("unchanged URL"));
+        assert!(update_tab_url(&mut data, "1", "javascript:alert(1)".to_string()).is_err());
+    }
+
+    #[test]
+    fn recently_closed_tab_keeps_its_latest_route() {
+        let mut data = BrowserData::default();
+        data.tabs.push(tab("1"));
+        let video_url = "https://www.youtube.com/watch?v=video123&list=playlist456";
+        update_tab_url(&mut data, "1", video_url.to_string()).expect("update current route");
+        let closed_tab = data.tabs.remove(0);
+
+        remember_closed_tab(&mut data, closed_tab);
+
+        assert_eq!(
+            data.closed_tabs.last().map(|tab| tab.url.as_str()),
+            Some(video_url)
         );
     }
 

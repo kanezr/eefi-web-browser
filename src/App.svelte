@@ -759,6 +759,7 @@
     let unlistenFindOpen: (() => void) | undefined;
     let unlistenFindResult: (() => void) | undefined;
     let unlistenReopenClosedTab: (() => void) | undefined;
+    let unlistenUrlChanged: (() => void) | undefined;
     let unlistenOneko: (() => void) | undefined;
     let observer: ResizeObserver | undefined;
     let disposed = false;
@@ -795,6 +796,20 @@
           "browser:reopen-closed-tab",
           () => void reopenClosedTab(),
         );
+        unlistenUrlChanged = await listen<PageEvent>(
+          "browser:url-changed",
+          ({ payload }) => {
+            tabs = tabs.map((tab) =>
+              tab.id === payload.tabId ? { ...tab, url: payload.url } : tab,
+            );
+            if (payload.tabId === activeTabId) {
+              address = payload.url;
+              void refreshBookmarkStatus(payload.url);
+              void refreshAdblockStatus(payload.url);
+              void refreshOnekoSettings(payload.url);
+            }
+          },
+        );
         unlistenFindResult = await listen<FindResult>(
           "browser:find-result",
           ({ payload }) => {
@@ -828,6 +843,7 @@
           unlistenFindOpen();
           unlistenFindResult();
           unlistenReopenClosedTab();
+          unlistenUrlChanged();
           unlistenOneko();
           return;
         }
@@ -926,6 +942,7 @@
       unlistenFindOpen?.();
       unlistenFindResult?.();
       unlistenReopenClosedTab?.();
+      unlistenUrlChanged?.();
       unlistenOneko?.();
       observer?.disconnect();
       window.removeEventListener("keydown", onKeydown);
@@ -1038,6 +1055,9 @@
           <option value={suggestion.url}>{suggestion.title}</option>
         {/each}
       </datalist>
+      {#if address}
+        <span class="omnibox-url-preview" aria-hidden="true">{address}</span>
+      {/if}
       {#if isLoading}<span class="loading-indicator" aria-label="Loading"></span>{/if}
       <button class="go-button" type="submit" aria-label="Go">↵</button>
     </form>

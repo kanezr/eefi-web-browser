@@ -12,6 +12,12 @@ Notable changes to Eefi Browser are documented here. This changelog follows
   shortcut. Recently closed tabs are kept per window for the current session,
   including their URL, title, and tab group.
 
+### Fixed
+
+- Track single-page route changes through WebView2's native history event so
+  the full URL is retained in the address bar and when reopening a closed tab.
+  Hover or focus the address bar to read long URLs in a wrapped preview.
+
 ## [0.1.2] - 2026-11-27
 
 ### Added

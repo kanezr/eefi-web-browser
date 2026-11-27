@@ -11,6 +11,7 @@
 - **Performance:** The startup path creates only the shell and initial webview. Rust release builds use LTO, a single codegen unit, abort-on-panic, and stripped symbols. Inactive page webviews are discarded after a configurable idle timeout and reloaded from their current URL when selected; page-local state and back/forward history are not retained across sleep.
 - **Home and new tabs:** Blank tabs and the Home button show a local browser-chrome page with search and bookmarks-bar shortcuts. The corresponding page webview is hidden while this page is shown; searches and shortcut selections navigate through the normal browser URL handling.
 - **Recently closed tabs:** The last ten closed tabs are kept in memory per window and can be reopened from the Browser menu or with `Ctrl+Shift+T`. URLs, titles, and existing tab groups are restored; this list is not persisted across browser restarts, and moving a tab to another window does not count as closing it.
+- **Single-page navigation:** WebView2's native history-change event reads the current source URL and updates tab state, the address bar, and recently closed-tab snapshots. This captures route and query changes without relying on page-script IPC.
 
 ## Roadmap
 

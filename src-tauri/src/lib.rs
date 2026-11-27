@@ -80,8 +80,8 @@ pub fn run() {
                 .parse()
                 .map_err(|error| format!("invalid initial webview URL: {error}"))?;
             let builder = tabs::page_builder(
-                app_handle,
-                state,
+                app_handle.clone(),
+                state.clone(),
                 storage,
                 download_location,
                 "1".to_string(),
@@ -96,6 +96,8 @@ pub fn run() {
                 .get_webview("page-1")
                 .ok_or("initial page webview was not registered")?;
             adblock::attach_to_webview(&initial_page, adblock, privacy)
+                .map_err(std::io::Error::other)?;
+            tabs::attach_url_history_tracking(app_handle, &initial_page, state)
                 .map_err(std::io::Error::other)?;
             Ok(())
         })
