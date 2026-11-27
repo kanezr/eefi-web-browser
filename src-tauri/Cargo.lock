@@ -964,7 +964,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "eefi-browser"
-version = "0.1.2"
+version = "0.1.2-oneko"
 dependencies = [
  "adblock",
  "futures-util",
@@ -974,7 +974,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
