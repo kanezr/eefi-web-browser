@@ -389,11 +389,22 @@ async fn write_and_verify_update(
     if total != candidate.asset_size {
         return Err("the update download is incomplete.".to_string());
     }
-    let actual_digest = format!("{:x}", hasher.finalize());
+    let actual_digest = digest_to_hex(&hasher.finalize());
     if actual_digest != candidate.digest {
         return Err("the update executable failed its SHA-256 integrity check.".to_string());
     }
     Ok(())
+}
+
+fn digest_to_hex(digest: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut encoded = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        encoded.push(HEX[usize::from(*byte >> 4)] as char);
+        encoded.push(HEX[usize::from(*byte & 0x0f)] as char);
+    }
+    encoded
 }
 
 #[cfg(test)]
@@ -460,6 +471,17 @@ mod tests {
         assert_eq!(
             parse_sha256_digest(&format!("sha1:{}", "a".repeat(64))),
             None
+        );
+    }
+
+    #[test]
+    fn sha256_digest_is_encoded_as_lowercase_hex() {
+        let mut hasher = Sha256::new();
+        hasher.update(b"abc");
+
+        assert_eq!(
+            digest_to_hex(&hasher.finalize()),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
 

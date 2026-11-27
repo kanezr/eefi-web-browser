@@ -1,6 +1,6 @@
 [package]
 name = "eefi-browser"
-version = "0.1.2"
+version = "0.1.2-oneko"
 description = "A lightweight desktop browser built with Tauri and WebView2"
 authors = ["Eefi Browser"]
 edition = "2021"

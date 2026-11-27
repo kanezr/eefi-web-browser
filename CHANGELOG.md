@@ -19,6 +19,8 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 - Keep SQLite's schema marker at version 6 for compatibility with older browser
   builds. Future database changes must remain additive and must not advance the
   marker.
+- Updated the SHA-256 dependency and updater digest encoding to keep integrity
+  verification compatible with `sha2` 0.11.
 
 ### Fixed
 
