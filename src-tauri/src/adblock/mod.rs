@@ -6,17 +6,18 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock, RwLock,
     },
-    time::{Duration, SystemTime},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use adblock::{
     cosmetic_filter_cache::ProceduralOrActionFilter,
     filters::cosmetic::{CosmeticFilterAction, CosmeticFilterOperator},
-    lists::ParseOptions,
+    lists::{parse_filter, ParseOptions},
     request::Request,
     resources::Resource,
     Engine, FilterSet,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::StreamExt;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -69,8 +70,10 @@ const FILTER_LISTS: [(&str, &str); 4] = [
 ];
 const THREAT_WARNING_HTML: &str = r#"<!doctype html><meta charset="utf-8"><title>Unsafe site blocked</title><style>body{margin:0;background:#11131a;color:#e8eaf2;font:16px system-ui;display:grid;min-height:100vh;place-items:center}.card{max-width:560px;padding:32px;border:1px solid #49445c;border-radius:14px;background:#1b1e29}h1{color:#ffb86b}</style><main class="card"><h1>Potentially unsafe site blocked</h1><p>This address appears on the browser's malware blocklist. The page was not loaded.</p><p>Use the Back button to return to safety.</p></main>"#;
 const MAX_FILTER_LIST_BYTES: usize = 8 * 1024 * 1024;
+const MAX_REDIRECT_RESOURCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CUSTOM_FILTER_CACHE_BYTES: usize = 16 * 1024 * 1024;
 const FILTER_UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const FILTER_RETRY_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const GENERIC_COSMETIC_MESSAGE: &str = "eefi-generic-cosmetic-v1";
 const MAX_COSMETIC_MESSAGE_BYTES: usize = 64 * 1024;
 const MAX_COSMETIC_BATCH_ITEMS: usize = 128;
@@ -87,6 +90,7 @@ const MAX_PROCEDURAL_COSMETIC_SELECTOR_LENGTH: usize = 512;
 const MAX_PROCEDURAL_COSMETIC_TEXT_LENGTH: usize = 256;
 const BLOCKED_COUNT_SHARDS: usize = 16;
 static SCRIPTLET_RESOURCES: OnceLock<Vec<Resource>> = OnceLock::new();
+static FILTER_CACHE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 fn new_blocked_counts() -> Vec<Mutex<HashMap<String, Arc<AtomicU64>>>> {
     (0..BLOCKED_COUNT_SHARDS)
@@ -343,6 +347,7 @@ struct AdblockInner {
     blocked_counts: Vec<Mutex<HashMap<String, Arc<AtomicU64>>>>,
     malicious_domains: RwLock<HashSet<String>>,
     custom_filter_config: RwLock<CustomFilterConfig>,
+    filter_list_error: RwLock<Option<String>>,
     filter_cache_directory: RwLock<Option<PathBuf>>,
     filter_refresh_lock: tokio::sync::Mutex<()>,
     preference_lock: Mutex<()>,
@@ -357,6 +362,14 @@ pub struct AdblockStatus {
     enabled: bool,
     site_allowed: bool,
     blocked_count: u64,
+    filter_list_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct NetworkRequestDecision {
+    blocked: bool,
+    redirect: Option<String>,
+    rewritten_url: Option<String>,
 }
 
 // Async registrations can complete after later navigations, so stale results must be discarded.
@@ -405,6 +418,7 @@ impl AdblockService {
             blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
+            filter_list_error: RwLock::new(None),
             filter_cache_directory: RwLock::new(None),
             filter_refresh_lock: tokio::sync::Mutex::new(()),
             preference_lock: Mutex::new(()),
@@ -414,15 +428,15 @@ impl AdblockService {
         }))
     }
 
-    fn should_block(
+    fn filter_request(
         &self,
         request_url: &str,
         source_url: &str,
         request_type: &str,
         method: &str,
-    ) -> Result<bool, String> {
+    ) -> Result<NetworkRequestDecision, String> {
         if !self.0.enabled.load(Ordering::Relaxed) {
-            return Ok(false);
+            return Ok(NetworkRequestDecision::default());
         }
 
         let parsed_source = Url::parse(source_url).ok();
@@ -439,7 +453,7 @@ impl AdblockService {
                 .map_err(|_| "ad blocker allowlist lock is poisoned".to_string())?
                 .contains(&source_host)
         {
-            return Ok(false);
+            return Ok(NetworkRequestDecision::default());
         }
 
         let match_source = if source_host.is_empty() {
@@ -449,17 +463,21 @@ impl AdblockService {
         };
         let request = match Request::new(request_url, match_source, request_type, method) {
             Ok(request) => request,
-            Err(_) => return Ok(false),
+            Err(_) => return Ok(NetworkRequestDecision::default()),
         };
-        let blocked = self
+        let result = self
             .0
             .engine
             .read()
             .map_err(|_| "ad blocker engine lock is poisoned".to_string())?
-            .check_network_request(&request)
-            .should_block();
+            .check_network_request(&request);
+        let decision = NetworkRequestDecision {
+            blocked: result.should_block(),
+            redirect: result.redirect,
+            rewritten_url: result.rewritten_url,
+        };
 
-        if blocked && !source_host.is_empty() {
+        if decision.blocked && !source_host.is_empty() {
             let counter = {
                 let mut counts = self.0.blocked_counts[blocked_count_shard(&source_host)]
                     .lock()
@@ -474,7 +492,20 @@ impl AdblockService {
                 Some(count.saturating_add(1))
             });
         }
-        Ok(blocked)
+        Ok(decision)
+    }
+
+    #[cfg(test)]
+    fn should_block(
+        &self,
+        request_url: &str,
+        source_url: &str,
+        request_type: &str,
+        method: &str,
+    ) -> Result<bool, String> {
+        Ok(self
+            .filter_request(request_url, source_url, request_type, method)?
+            .blocked)
     }
 
     fn status(&self, host: &str) -> Result<AdblockStatus, String> {
@@ -501,11 +532,27 @@ impl AdblockService {
                 .unwrap_or_default(),
             None => 0,
         };
+        let filter_list_error = self
+            .0
+            .filter_list_error
+            .read()
+            .map_err(|_| "ad blocker filter status lock is poisoned".to_string())?
+            .clone();
         Ok(AdblockStatus {
             enabled: self.0.enabled.load(Ordering::Relaxed),
             site_allowed,
             blocked_count,
+            filter_list_error,
         })
+    }
+
+    fn set_filter_list_error(&self, error: Option<String>) -> Result<(), String> {
+        *self
+            .0
+            .filter_list_error
+            .write()
+            .map_err(|_| "ad blocker filter status lock is poisoned".to_string())? = error;
+        Ok(())
     }
 
     fn is_malicious_url(&self, value: &str) -> Result<bool, String> {
@@ -1148,6 +1195,9 @@ pub fn start_filter_updates(service: AdblockService, directory: PathBuf, storage
             Ok(config) => config,
             Err(error) => {
                 eprintln!("could not read custom filter configuration: {error}");
+                if let Err(status_error) = service.set_filter_list_error(Some(error)) {
+                    eprintln!("could not record ad blocker filter status: {status_error}");
+                }
                 return;
             }
         };
@@ -1190,34 +1240,64 @@ pub fn start_filter_updates(service: AdblockService, directory: PathBuf, storage
             Ok(client) => client,
             Err(error) => {
                 eprintln!("could not create ad blocker update client: {error}");
+                if let Err(status_error) = service.set_filter_list_error(Some(error.to_string())) {
+                    eprintln!("could not record ad blocker filter status: {status_error}");
+                }
                 return;
             }
         };
 
         loop {
+            let mut retry_interval = FILTER_UPDATE_INTERVAL;
+            let custom_filter_config = match service.custom_filter_config() {
+                Ok(config) => config,
+                Err(error) => {
+                    eprintln!("could not read custom filter configuration: {error}");
+                    if let Err(status_error) = service.set_filter_list_error(Some(error)) {
+                        eprintln!("could not record ad blocker filter status: {status_error}");
+                    }
+                    tokio::time::sleep(FILTER_RETRY_INTERVAL).await;
+                    continue;
+                }
+            };
             let check_directory = directory.clone();
             let stale = match tauri::async_runtime::spawn_blocking(move || {
-                filter_cache_is_stale(&check_directory)
+                filter_cache_is_stale(&check_directory, &custom_filter_config)
             })
             .await
             {
                 Ok(Ok(stale)) => stale,
                 Ok(Err(error)) => {
                     eprintln!("could not check ad blocker filter age: {error}");
+                    retry_interval = FILTER_RETRY_INTERVAL;
                     true
                 }
                 Err(error) => {
                     eprintln!("ad blocker cache worker failed: {error}");
+                    retry_interval = FILTER_RETRY_INTERVAL;
                     true
                 }
             };
 
             if stale {
-                if let Err(error) = refresh_filter_lists(&client, &service, &directory).await {
-                    eprintln!("could not update ad blocker filter lists: {error}");
+                match refresh_filter_lists(&client, &service, &directory).await {
+                    Ok(()) => {
+                        if let Err(error) = service.set_filter_list_error(None) {
+                            eprintln!("could not clear ad blocker filter status: {error}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("could not update ad blocker filter lists: {error}");
+                        if let Err(status_error) =
+                            service.set_filter_list_error(Some(error.clone()))
+                        {
+                            eprintln!("could not record ad blocker filter status: {status_error}");
+                        }
+                        retry_interval = FILTER_RETRY_INTERVAL;
+                    }
                 }
             }
-            tokio::time::sleep(FILTER_UPDATE_INTERVAL).await;
+            tokio::time::sleep(retry_interval).await;
         }
     });
 }
@@ -1246,17 +1326,21 @@ async fn refresh_filter_lists(
     let (mut cached, mut custom_cached) = tauri::async_runtime::spawn_blocking(move || {
         Ok::<_, String>((
             read_cached_filter_lists(&read_directory)?,
-            read_custom_filter_cache(&read_directory)?,
+            read_custom_filter_cache_recoverable(&read_directory)?,
         ))
     })
     .await
     .map_err(|error| format!("filter cache worker failed: {error}"))??;
+    let mut default_update_failures = 0;
     for (filename, url) in FILTER_LISTS {
         match fetch_filter_list(client, url).await {
             Ok(contents) => {
                 cached.insert(filename.to_string(), contents);
             }
-            Err(error) => eprintln!("filter list update failed for {url}: {error}"),
+            Err(error) => {
+                eprintln!("filter list update failed for {filename}: {error}");
+                default_update_failures += 1;
+            }
         }
     }
     custom_cached.retain(|url, _| custom_filter_config.list_urls.contains(url));
@@ -1298,10 +1382,10 @@ async fn refresh_filter_lists(
     .map_err(|error| format!("filter compiler worker failed: {error}"))??;
     service.replace_engine(engine)?;
     service.replace_malicious_domains(malicious_domains)?;
-    if !custom_update_failures.is_empty() {
+    if default_update_failures > 0 || !custom_update_failures.is_empty() {
         return Err(format!(
-            "could not refresh {} custom filter list(s); cached lists, when available, remain active",
-            custom_update_failures.len()
+            "could not refresh {default_update_failures} built-in and {} custom filter list(s); cached versions remain active where available",
+            custom_update_failures.len(),
         ));
     }
     Ok(())
@@ -1336,7 +1420,74 @@ async fn fetch_filter_list(client: &reqwest::Client, url: &str) -> Result<String
     if contents.is_empty() {
         return Err("filter list response was empty".to_string());
     }
-    String::from_utf8(contents).map_err(|error| format!("filter list is not UTF-8: {error}"))
+    let contents = String::from_utf8(contents)
+        .map_err(|error| format!("filter list is not UTF-8: {error}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_filter_list_contents(&contents)?;
+        Ok::<_, String>(contents)
+    })
+    .await
+    .map_err(|error| format!("filter validation worker failed: {error}"))?
+}
+
+fn validate_filter_list_contents(contents: &str) -> Result<(), String> {
+    let mut has_supported_rule = false;
+    for line in contents.lines() {
+        let line = line.trim().trim_start_matches('\u{feff}').trim();
+        if line.is_empty() || line.starts_with('!') || line.starts_with('[') {
+            continue;
+        }
+        if line.starts_with('<') {
+            return Err("response does not look like a filter list".to_string());
+        }
+        let has_filter_syntax = [
+            "||", "@@", "##", "#@#", "#?#", "#%#", "$", "^", "|", "/", "*",
+        ]
+        .iter()
+        .any(|marker| line.contains(marker));
+        let looks_like_domain_rule = !line.chars().any(char::is_whitespace)
+            && line.contains('.')
+            && !line.starts_with('{')
+            && !line.starts_with('"');
+        if !has_supported_rule
+            && (has_filter_syntax || looks_like_domain_rule)
+            && parse_filter(line, false, ParseOptions::default()).is_ok()
+        {
+            has_supported_rule = true;
+        }
+    }
+    if has_supported_rule {
+        Ok(())
+    } else {
+        Err("filter list contains no supported rules".to_string())
+    }
+}
+
+fn decode_redirect_data_url(data_url: &str) -> Result<(String, Vec<u8>), String> {
+    let data_url = data_url
+        .strip_prefix("data:")
+        .ok_or_else(|| "redirect resource is not a data URL".to_string())?;
+    let (metadata, encoded_body) = data_url
+        .split_once(',')
+        .ok_or_else(|| "redirect data URL has no body".to_string())?;
+    let (mime_type, encoding) = metadata
+        .split_once(';')
+        .ok_or_else(|| "redirect data URL has no encoding".to_string())?;
+    if !encoding.eq_ignore_ascii_case("base64")
+        || mime_type.is_empty()
+        || !mime_type
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'+' | b'.'))
+    {
+        return Err("redirect data URL has unsupported metadata".to_string());
+    }
+    let body = BASE64_STANDARD
+        .decode(encoded_body)
+        .map_err(|error| format!("redirect resource has invalid base64: {error}"))?;
+    if body.len() > MAX_REDIRECT_RESOURCE_BYTES {
+        return Err("redirect resource exceeds the configured size limit".to_string());
+    }
+    Ok((mime_type.to_string(), body))
 }
 
 fn load_cached_engine(
@@ -1385,13 +1536,22 @@ fn compiled_engine_is_current(directory: &Path, config: &CustomFilterConfig) -> 
         Ok(cached) if cached == BUILTIN_FILTERS => {}
         _ => return false,
     }
+    if read_custom_filter_cache(directory).is_err() {
+        return false;
+    }
     for (filename, _) in FILTER_LISTS {
-        let list = match std::fs::metadata(directory.join(filename))
-            .and_then(|metadata| metadata.modified())
-        {
+        let path = directory.join(filename);
+        let list = match std::fs::metadata(&path).and_then(|metadata| metadata.modified()) {
             Ok(modified) => modified,
             Err(_) => return false,
         };
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(_) => return false,
+        };
+        if validate_filter_list_contents(&contents).is_err() {
+            return false;
+        }
         if list > compiled {
             return false;
         }
@@ -1415,10 +1575,13 @@ fn read_cached_filter_lists(directory: &Path) -> Result<HashMap<String, String>,
     let mut lists = HashMap::new();
     for (filename, _) in FILTER_LISTS {
         match std::fs::read_to_string(directory.join(filename)) {
-            Ok(contents) if contents.len() <= MAX_FILTER_LIST_BYTES => {
+            Ok(contents)
+                if contents.len() <= MAX_FILTER_LIST_BYTES
+                    && validate_filter_list_contents(&contents).is_ok() =>
+            {
                 lists.insert(filename.to_string(), contents);
             }
-            Ok(_) => eprintln!("ignoring oversized cached filter list {filename}"),
+            Ok(_) => eprintln!("ignoring invalid or oversized cached filter list {filename}"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("could not read {filename}: {error}")),
         }
@@ -1444,12 +1607,41 @@ fn read_custom_filter_cache(directory: &Path) -> Result<HashMap<String, String>,
         if contents.len() > MAX_FILTER_LIST_BYTES {
             return Err("cached custom filter list exceeds the configured size limit".to_string());
         }
+        validate_filter_list_contents(contents)
+            .map_err(|error| format!("cached custom filter list is invalid: {error}"))?;
         size = size.saturating_add(contents.len());
     }
     if size > MAX_CUSTOM_FILTER_CACHE_BYTES {
         return Err("custom filter cache exceeds the configured size limit".to_string());
     }
     Ok(cache)
+}
+
+fn read_custom_filter_cache_recoverable(
+    directory: &Path,
+) -> Result<HashMap<String, String>, String> {
+    match read_custom_filter_cache(directory) {
+        Ok(cache) => Ok(cache),
+        Err(error) => {
+            let path = directory.join("custom-filter-lists.json");
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let quarantine_path =
+                directory.join(format!("custom-filter-lists.corrupt-{timestamp}.json"));
+            std::fs::rename(&path, &quarantine_path).map_err(|rename_error| {
+                format!(
+                    "{error}; could not quarantine the corrupt custom filter cache: {rename_error}"
+                )
+            })?;
+            eprintln!(
+                "quarantined corrupt custom filter cache as {}: {error}",
+                quarantine_path.display()
+            );
+            Ok(HashMap::new())
+        }
+    }
 }
 
 fn persist_custom_filter_cache(
@@ -1466,13 +1658,52 @@ fn persist_custom_filter_cache(
     }
     let serialized_config = serde_json::to_vec(config)
         .map_err(|error| format!("could not encode custom filter settings: {error}"))?;
-    std::fs::write(directory.join("custom-filter-lists.json"), serialized_lists)
-        .map_err(|error| format!("could not save custom filter cache: {error}"))?;
-    std::fs::write(
-        directory.join("custom-filter-config.json"),
-        serialized_config,
+    atomic_write_file(
+        &directory.join("custom-filter-lists.json"),
+        &serialized_lists,
+    )
+    .map_err(|error| format!("could not save custom filter cache: {error}"))?;
+    atomic_write_file(
+        &directory.join("custom-filter-config.json"),
+        &serialized_config,
     )
     .map_err(|error| format!("could not save custom filter settings: {error}"))
+}
+
+fn atomic_write_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+
+    let directory = path
+        .parent()
+        .ok_or_else(|| "cache file path has no parent directory".to_string())?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "cache file path has an invalid name".to_string())?;
+    let temporary_path = directory.join(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        FILTER_CACHE_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut created = false;
+    let write_result = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| format!("could not create temporary cache file: {error}"))?;
+        created = true;
+        file.write_all(contents)
+            .map_err(|error| format!("could not write temporary cache file: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("could not flush temporary cache file: {error}"))?;
+        std::fs::rename(&temporary_path, path)
+            .map_err(|error| format!("could not atomically replace cache file: {error}"))
+    })();
+    if write_result.is_err() && created {
+        let _ = std::fs::remove_file(temporary_path);
+    }
+    write_result
 }
 
 fn combine_filter_lists(
@@ -1537,7 +1768,7 @@ fn persist_filter_lists_and_build_engine(
         .map_err(|error| format!("could not create ad blocker cache directory: {error}"))?;
     for (filename, _) in FILTER_LISTS {
         if let Some(contents) = lists.get(filename) {
-            std::fs::write(directory.join(filename), contents)
+            atomic_write_file(&directory.join(filename), contents.as_bytes())
                 .map_err(|error| format!("could not save {filename}: {error}"))?;
         }
     }
@@ -1550,19 +1781,23 @@ fn persist_filter_lists_and_build_engine(
 fn persist_engine(directory: &Path, engine: &Engine) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create ad blocker cache directory: {error}"))?;
-    std::fs::write(directory.join("engine.bin"), engine.serialize())
+    atomic_write_file(&directory.join("engine.bin"), &engine.serialize())
         .map_err(|error| format!("could not save compiled ad blocker engine: {error}"))?;
-    std::fs::write(
-        directory.join(BUILTIN_FILTERS_CACHE_FILE),
+    atomic_write_file(
+        &directory.join(BUILTIN_FILTERS_CACHE_FILE),
         BUILTIN_FILTERS.as_bytes(),
     )
     .map_err(|error| format!("could not save built-in ad blocker rules: {error}"))
 }
 
-fn filter_cache_is_stale(directory: &Path) -> Result<bool, String> {
+fn filter_cache_is_stale(
+    directory: &Path,
+    custom_filter_config: &CustomFilterConfig,
+) -> Result<bool, String> {
     let now = SystemTime::now();
     for (filename, _) in FILTER_LISTS {
-        let metadata = match std::fs::metadata(directory.join(filename)) {
+        let path = directory.join(filename);
+        let metadata = match std::fs::metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
             Err(error) => return Err(format!("could not inspect {filename}: {error}")),
@@ -1570,9 +1805,37 @@ fn filter_cache_is_stale(directory: &Path) -> Result<bool, String> {
         if metadata.len() > MAX_FILTER_LIST_BYTES as u64 {
             return Ok(true);
         }
+        let contents = std::fs::read_to_string(&path)
+            .map_err(|error| format!("could not read cached {filename}: {error}"))?;
+        if validate_filter_list_contents(&contents).is_err() {
+            return Ok(true);
+        }
         let modified = metadata
             .modified()
             .map_err(|error| format!("could not read {filename} modification time: {error}"))?;
+        if now.duration_since(modified).unwrap_or_default() >= FILTER_UPDATE_INTERVAL {
+            return Ok(true);
+        }
+    }
+    let custom_lists = match read_custom_filter_cache(directory) {
+        Ok(cache) => cache,
+        Err(error) => {
+            eprintln!("custom filter cache needs recovery: {error}");
+            return Ok(true);
+        }
+    };
+    if custom_filter_config
+        .list_urls
+        .iter()
+        .any(|url| !custom_lists.contains_key(url))
+    {
+        return Ok(true);
+    }
+    let custom_cache_path = directory.join("custom-filter-lists.json");
+    if let Ok(metadata) = std::fs::metadata(&custom_cache_path) {
+        let modified = metadata.modified().map_err(|error| {
+            format!("could not read custom filter cache modification time: {error}")
+        })?;
         if now.duration_since(modified).unwrap_or_default() >= FILTER_UPDATE_INTERVAL {
             return Ok(true);
         }
@@ -1797,7 +2060,13 @@ pub async fn adblock_set_custom_filters(
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|error| format!("could not create custom filter update client: {error}"))?;
-    refresh_filter_lists(&client, &service, &directory).await
+    match refresh_filter_lists(&client, &service, &directory).await {
+        Ok(()) => service.set_filter_list_error(None),
+        Err(error) => {
+            service.set_filter_list_error(Some(error.clone()))?;
+            Err(error)
+        }
+    }
 }
 
 pub fn attach_to_webview(
@@ -1824,7 +2093,7 @@ pub fn attach_to_webview(
         };
         use windows::{
             core::{w, Interface, HSTRING, PWSTR},
-            Win32::System::Com::IStream,
+            Win32::{System::Com::IStream, UI::Shell::SHCreateMemStream},
         };
 
         let (result_sender, result_receiver) = mpsc::sync_channel(1);
@@ -1930,8 +2199,8 @@ pub fn attach_to_webview(
                                 let mut method = PWSTR::null();
                                 request.Method(&mut method)?;
                                 let method = take_pwstr(method);
-                                if callback_service
-                                    .should_block(
+                                let decision = callback_service
+                                    .filter_request(
                                         &request_url,
                                         &source_url,
                                         request_type,
@@ -1939,9 +2208,44 @@ pub fn attach_to_webview(
                                     )
                                     .unwrap_or_else(|error| {
                                         eprintln!("ad blocker request check failed: {error}");
-                                        false
-                                    })
-                                {
+                                        NetworkRequestDecision::default()
+                                    });
+                                if decision.blocked {
+                                    let mut redirect_applied = false;
+                                    if let Some(redirect) = decision.redirect.as_deref() {
+                                        match decode_redirect_data_url(redirect) {
+                                            Ok((mime_type, body)) => {
+                                                let stream = SHCreateMemStream(Some(&body));
+                                                if let Some(stream) = stream {
+                                                    let response_headers = HSTRING::from(format!(
+                                                        "Content-Type: {mime_type}\r\nContent-Length: {}",
+                                                        body.len()
+                                                    ));
+                                                    let response = environment
+                                                        .CreateWebResourceResponse(
+                                                            Some(&stream),
+                                                            200,
+                                                            &HSTRING::from("OK"),
+                                                            &response_headers,
+                                                        )?;
+                                                    args.SetResponse(&response)?;
+                                                    redirect_applied = true;
+                                                } else {
+                                                    eprintln!(
+                                                        "could not create ad blocker redirect response stream"
+                                                    );
+                                                }
+                                            }
+                                            Err(error) => {
+                                                eprintln!(
+                                                    "could not decode ad blocker redirect resource: {error}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    if redirect_applied {
+                                        return Ok(());
+                                    }
                                     let response = environment.CreateWebResourceResponse(
                                         None::<&IStream>,
                                         204,
@@ -1949,6 +2253,8 @@ pub fn attach_to_webview(
                                         &HSTRING::from("Content-Length: 0"),
                                     )?;
                                     args.SetResponse(&response)?;
+                                } else if let Some(rewritten_url) = decision.rewritten_url {
+                                    request.SetUri(&HSTRING::from(rewritten_url))?;
                                 }
                                 Ok(())
                             },
@@ -2508,6 +2814,7 @@ mod tests {
             blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
+            filter_list_error: RwLock::new(None),
             filter_cache_directory: RwLock::new(None),
             filter_refresh_lock: tokio::sync::Mutex::new(()),
             preference_lock: Mutex::new(()),
@@ -2581,6 +2888,31 @@ mod tests {
                 .expect("read concurrent blocked request count")
                 .blocked_count,
             102
+        );
+    }
+
+    #[test]
+    fn filter_request_exposes_non_blocking_url_rewrites() {
+        let service = AdblockService::new();
+        service
+            .replace_engine(build_engine(
+                "||tracking.example.test/pixel^$removeparam=utm_source",
+            ))
+            .expect("install removeparam rule");
+
+        let decision = service
+            .filter_request(
+                "https://tracking.example.test/pixel?utm_source=campaign&keep=yes",
+                "https://publisher.example.test/",
+                "xmlhttprequest",
+                "GET",
+            )
+            .expect("evaluate rewritten request");
+        assert!(!decision.blocked);
+        assert_eq!(
+            decision.rewritten_url.as_deref(),
+            Some("https://tracking.example.test/pixel?keep=yes"),
+            "{decision:?}"
         );
     }
 
@@ -2706,6 +3038,7 @@ mod tests {
             blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
+            filter_list_error: RwLock::new(None),
             filter_cache_directory: RwLock::new(None),
             filter_refresh_lock: tokio::sync::Mutex::new(()),
             preference_lock: Mutex::new(()),
@@ -2754,6 +3087,7 @@ mod tests {
             blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
+            filter_list_error: RwLock::new(None),
             filter_cache_directory: RwLock::new(None),
             filter_refresh_lock: tokio::sync::Mutex::new(()),
             preference_lock: Mutex::new(()),
@@ -2823,6 +3157,7 @@ mod tests {
             blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
+            filter_list_error: RwLock::new(None),
             filter_cache_directory: RwLock::new(None),
             filter_refresh_lock: tokio::sync::Mutex::new(()),
             preference_lock: Mutex::new(()),
@@ -2907,6 +3242,7 @@ mod tests {
             blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
+            filter_list_error: RwLock::new(None),
             filter_cache_directory: RwLock::new(None),
             filter_refresh_lock: tokio::sync::Mutex::new(()),
             preference_lock: Mutex::new(()),
@@ -3002,13 +3338,127 @@ mod tests {
     }
 
     #[test]
+    fn filter_list_validation_rejects_error_documents_and_unparseable_text() {
+        assert!(validate_filter_list_contents(
+            "[Adblock Plus 2.0]\n! list metadata\n||ads.example.test^\n"
+        )
+        .is_ok());
+        assert!(validate_filter_list_contents(
+            "<!doctype html><html><body>Not found</body></html>"
+        )
+        .is_err());
+        assert!(validate_filter_list_contents("Service temporarily unavailable\n").is_err());
+    }
+
+    #[test]
+    fn corrupt_custom_filter_cache_is_quarantined_for_recovery() {
+        let directory = tempfile::tempdir().expect("temporary filter cache");
+        let cache_path = directory.path().join("custom-filter-lists.json");
+        std::fs::write(&cache_path, "{invalid json").expect("write corrupt cache");
+
+        assert!(read_custom_filter_cache_recoverable(directory.path())
+            .expect("recover corrupt cache")
+            .is_empty());
+        assert!(!cache_path.exists());
+        assert!(std::fs::read_dir(directory.path())
+            .expect("read cache directory")
+            .filter_map(Result::ok)
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("custom-filter-lists.corrupt-")));
+    }
+
+    #[test]
+    fn atomic_cache_writes_replace_existing_files() {
+        let directory = tempfile::tempdir().expect("temporary filter cache");
+        let cache_path = directory.path().join("custom-filter-lists.json");
+        atomic_write_file(&cache_path, b"old cache").expect("write initial cache");
+        atomic_write_file(&cache_path, b"new cache").expect("replace cache");
+
+        assert_eq!(
+            std::fs::read(cache_path).expect("read replaced cache"),
+            b"new cache"
+        );
+    }
+
+    #[test]
+    fn invalid_cached_default_list_triggers_refresh() {
+        let directory = tempfile::tempdir().expect("temporary filter cache");
+        for (filename, _) in FILTER_LISTS {
+            std::fs::write(directory.path().join(filename), "||valid.example.test^\n")
+                .expect("write valid cached filter list");
+        }
+        assert!(
+            !filter_cache_is_stale(directory.path(), &CustomFilterConfig::default())
+                .expect("check valid cached lists")
+        );
+        std::fs::write(
+            directory.path().join(FILTER_LISTS[0].0),
+            "<html>proxy error</html>",
+        )
+        .expect("replace cached list with an error page");
+        assert!(
+            filter_cache_is_stale(directory.path(), &CustomFilterConfig::default())
+                .expect("detect invalid cached list")
+        );
+    }
+
+    #[test]
+    fn redirect_data_urls_are_decoded_with_size_and_metadata_checks() {
+        assert_eq!(
+            decode_redirect_data_url("data:text/plain;base64,YWRz").expect("decode redirect body"),
+            ("text/plain".to_string(), b"ads".to_vec())
+        );
+        assert!(decode_redirect_data_url("https://example.test/").is_err());
+        assert!(decode_redirect_data_url("data:text/plain,not-base64").is_err());
+        assert!(decode_redirect_data_url("data:text/plain;base64,%%%").is_err());
+    }
+
+    #[test]
+    fn engine_redirect_resources_produce_decodable_response_bodies() {
+        let mut engine = build_engine("||ads.example.test^$script,redirect=noopjs");
+        engine.use_resources([Resource {
+            name: "noop.js".to_string(),
+            aliases: vec!["noopjs".to_string()],
+            kind: adblock::resources::ResourceType::Mime(
+                adblock::resources::MimeType::ApplicationJavascript,
+            ),
+            content: BASE64_STANDARD.encode("void 0;"),
+            dependencies: Vec::new(),
+            permission: Default::default(),
+        }]);
+        let request = Request::new(
+            "https://ads.example.test/ad.js",
+            "https://publisher.example.test/",
+            "script",
+            "GET",
+        )
+        .expect("construct redirect request");
+        let result = engine.check_network_request(&request);
+        assert!(result.should_block());
+        let (mime_type, body) =
+            decode_redirect_data_url(result.redirect.as_deref().expect("redirect resource body"))
+                .expect("decode adblock redirect body");
+        assert_eq!(mime_type, "application/javascript");
+        assert_eq!(body, b"void 0;");
+    }
+
+    #[test]
     fn status_without_a_page_host_still_reports_the_global_setting() {
         let service = AdblockService::new();
         service.set_enabled(false).expect("disable ad blocker");
+        service
+            .set_filter_list_error(Some("list update failed".to_string()))
+            .expect("record filter list error");
         let status = service.status("").expect("query global status");
         assert!(!status.enabled);
         assert!(!status.site_allowed);
         assert_eq!(status.blocked_count, 0);
+        assert_eq!(
+            status.filter_list_error.as_deref(),
+            Some("list update failed")
+        );
     }
 
     #[test]
@@ -3028,9 +3478,18 @@ mod tests {
              news.example.test##+js(abort-current-script, foo, bar)"
                 .to_string(),
         );
-        lists.insert("easyprivacy.txt".to_string(), String::new());
-        lists.insert("ublock-filters.txt".to_string(), String::new());
-        lists.insert(MALWARE_FILTER_LIST.0.to_string(), String::new());
+        lists.insert(
+            "easyprivacy.txt".to_string(),
+            "||cached-tracker.example.test^\n".to_string(),
+        );
+        lists.insert(
+            "ublock-filters.txt".to_string(),
+            "||cached-ublock.example.test^\n".to_string(),
+        );
+        lists.insert(
+            MALWARE_FILTER_LIST.0.to_string(),
+            "||cached-malware.example.test^\n".to_string(),
+        );
         persist_filter_lists_and_build_engine(directory.path(), &lists, &custom_lists, &config)
             .expect("compile and persist filter engine");
 

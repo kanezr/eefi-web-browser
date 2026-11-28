@@ -46,7 +46,12 @@
     | "tab-groups";
   type Bookmark = { id: number; title: string; url: string; onBar: boolean };
   type Suggestion = { title: string; url: string };
-  type AdblockStatus = { enabled: boolean; siteAllowed: boolean; blockedCount: number };
+  type AdblockStatus = {
+    enabled: boolean;
+    siteAllowed: boolean;
+    blockedCount: number;
+    filterListError: string | null;
+  };
   type OnekoSettings = {
     enabled: boolean;
     speed: "slow" | "normal" | "fast";
@@ -90,6 +95,7 @@
   let adblockEnabled = $state(true);
   let currentSiteAllowed = $state(false);
   let blockedCount = $state(0);
+  let filterListError = $state<string | null>(null);
   let onekoSettings = $state<OnekoSettings>({
     enabled: false,
     speed: "normal",
@@ -165,6 +171,7 @@
       adblockEnabled = status.enabled;
       currentSiteAllowed = status.siteAllowed;
       blockedCount = status.blockedCount;
+      filterListError = status.filterListError;
     } catch (error) {
       showError(error);
     }
@@ -1145,9 +1152,10 @@
     >⊘</button>
     <button
       class:site-allowed={currentSiteAllowed}
+      class:filter-list-error={filterListError !== null}
       class="icon-button adblock-button"
       aria-label={currentSiteAllowed ? `Enable ad blocking on ${activeHost}` : `Allow ads on ${activeHost}`}
-      title={`${currentSiteAllowed ? "Enable" : "Disable"} ad blocking for ${activeHost || "this site"}${blockedCount ? ` · ${blockedCount} blocked` : ""}`}
+      title={`${currentSiteAllowed ? "Enable" : "Disable"} ad blocking for ${activeHost || "this site"}${blockedCount ? ` · ${blockedCount} blocked` : ""}${filterListError ? ` · Filter list update issue: ${filterListError}` : ""}`}
       disabled={!activeHost}
       onclick={() => void toggleSiteAdblock()}
     >
@@ -1155,9 +1163,10 @@
     </button>
     <button
       class:adblock-off={!adblockEnabled}
+      class:filter-list-error={filterListError !== null}
       class="icon-button adblock-button"
       aria-label={adblockEnabled ? "Disable ad blocker" : "Enable ad blocker"}
-      title={adblockEnabled ? "Disable ad blocker" : "Enable ad blocker"}
+      title={`${adblockEnabled ? "Disable ad blocker" : "Enable ad blocker"}${filterListError ? ` · Filter list update issue: ${filterListError}` : ""}`}
       onclick={() => void toggleAdblock()}
     >◈</button>
     <div class="browser-menu" bind:this={browserMenuElement}>

@@ -25,6 +25,10 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 
 - Invalidate the compiled ad-block engine when built-in rules change, so
   existing profiles rebuild stale cached rules after restart.
+- Reject invalid filter-list responses without replacing the last-known-good
+  cache, recover corrupted custom-list caches, and retry failed updates sooner.
+- Apply adblock engine URL rewrites and available redirect resources to
+  intercepted WebView2 requests.
 
 ### Known limitations
 

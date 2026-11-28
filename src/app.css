@@ -267,6 +267,10 @@ input:focus-visible {
   color: #e7b64f;
 }
 
+.adblock-button.filter-list-error {
+  color: #ff8c70;
+}
+
 .adblock-button:disabled {
   color: #747b89;
   cursor: default;
