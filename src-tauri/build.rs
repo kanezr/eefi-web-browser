@@ -8,6 +8,7 @@ const APP_COMMANDS: &[&str] = &[
     "active_tab_id",
     "toggle_page_devtools",
     "open_page_print_dialog",
+    "toggle_reader_mode",
     "open_find_bar",
     "open_reopen_closed_tab",
     "resolve_download_save_path",

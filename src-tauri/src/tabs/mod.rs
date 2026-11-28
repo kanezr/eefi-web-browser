@@ -33,6 +33,7 @@ const TAB_SLEEP_TIMEOUT_UNINITIALIZED: u64 = u64::MAX;
 const TAB_SLEEP_SCAN_INTERVAL_SECONDS: u64 = 5;
 const TAB_SLEEP_TIMEOUT_OPTIONS: &[u64] = &[0, 60, 300, 900, 1800, 3600];
 const MAX_CLOSED_TABS: usize = 10;
+const READER_MODE_SCRIPT: &str = include_str!("reader_mode.js");
 #[cfg(windows)]
 type DownloadOperation =
     webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation;
@@ -2378,6 +2379,48 @@ pub async fn open_page_print_dialog(webview: Webview<Wry>) -> Result<(), String>
         return Err("printing from page content is only allowed for a page webview".to_string());
     }
     show_print_ui(webview).await
+}
+
+#[tauri::command]
+pub fn toggle_reader_mode(
+    app: AppHandle,
+    webview: Webview<Wry>,
+    normal_state: State<'_, BrowserState>,
+    window_states: State<'_, BrowserWindowStates>,
+) -> Result<(), String> {
+    if is_page_webview_label(webview.label()) {
+        return Err("Reader Mode can only be toggled from browser chrome.".to_string());
+    }
+    let state = state_for_window(
+        webview.window().label(),
+        normal_state.inner(),
+        window_states.inner(),
+    )?;
+    let (tab_id, tab_url, sleeping) = {
+        let data = state
+            .0
+            .lock()
+            .map_err(|_| "browser tab state lock is poisoned".to_string())?;
+        let tab_id = data
+            .active_tab_id
+            .clone()
+            .ok_or_else(|| "there is no active tab for Reader Mode.".to_string())?;
+        let tab = data
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .ok_or_else(|| "the active tab does not exist".to_string())?;
+        (tab_id, tab.url.clone(), tab.sleeping)
+    };
+    if !is_http_url(&tab_url) {
+        return Err("Reader Mode is available on HTTP and HTTPS pages.".to_string());
+    }
+    if sleeping {
+        return Err("Wake the sleeping tab before using Reader Mode.".to_string());
+    }
+    let page = get_tab_view(&app, &tab_id, &state)?;
+    page.eval(READER_MODE_SCRIPT)
+        .map_err(|error| format!("could not toggle Reader Mode: {error}"))
 }
 
 #[tauri::command]

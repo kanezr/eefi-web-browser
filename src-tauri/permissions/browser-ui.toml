@@ -6,6 +6,7 @@ permissions = [
   "allow-active-tab-id",
   "allow-toggle-page-devtools",
   "allow-open-page-print-dialog",
+  "allow-toggle-reader-mode",
   "allow-open-find-bar",
   "allow-find-in-page",
   "allow-reopen-closed-tab",

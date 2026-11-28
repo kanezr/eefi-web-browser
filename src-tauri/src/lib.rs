@@ -109,6 +109,7 @@ pub fn run() {
             tabs::active_tab_id,
             tabs::toggle_page_devtools,
             tabs::open_page_print_dialog,
+            tabs::toggle_reader_mode,
             tabs::open_find_bar,
             tabs::find_in_page,
             tabs::open_reopen_closed_tab,

@@ -4,6 +4,21 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.3] - 2026-11-28
+
+### Added
+
+- Added Reader Mode for web articles, with adjustable text size and column
+  width, light/sepia/dark themes, and an in-page exit control.
+- Added live download byte progress with pause, resume, and cancel controls.
+- Added a persistent **Ask where to save each file** preference. Choosing a
+  location opens the Windows save dialog before the download starts.
+  
+### Fixed
+
+- Keep active downloads in the list when clearing completed download records.
+- Remove a canceled download's partial file after WebView2 finishes canceling it.
+
 ## [0.1.3-beta] - 2026-11-27
 
 ### Added
@@ -11,17 +26,12 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 - Added **Reopen closed tab** to the Browser menu and the `Ctrl+Shift+T`
   shortcut. Recently closed tabs are kept per window for the current session,
   including their URL, title, and tab group.
-- Added live download byte progress with pause, resume, and cancel controls.
-- Added a persistent **Ask where to save each file** preference. Choosing a
-  location opens the Windows save dialog before the download starts.
 
 ### Fixed
 
 - Track single-page route changes through WebView2's native history event so
   the full URL is retained in the address bar and when reopening a closed tab.
   Hover or focus the address bar to read long URLs in a wrapped preview.
-- Keep active downloads in the list when clearing completed download records.
-- Remove a canceled download's partial file after WebView2 finishes canceling it.
 
 ## [0.1.2] - 2026-11-27
 

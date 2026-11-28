@@ -110,6 +110,12 @@
   const activeTab = $derived(tabs.find((tab) => tab.id === activeTabId));
   const isSecure = $derived(activeTab?.url.startsWith("https://") ?? false);
   const activeHost = $derived(hostForUrl(activeTab?.url ?? ""));
+  const canUseReaderMode = $derived(
+    !managerView &&
+      !homeTabIds.includes(activeTabId) &&
+      !activeTab?.sleeping &&
+      /^https?:\/\//i.test(activeTab?.url ?? ""),
+  );
 
   function hostForUrl(url: string) {
     try {
@@ -554,6 +560,15 @@
       await invoke(action, { tabId: activeTabId });
       if (action === "reload") isLoading = true;
       if (action === "stop") isLoading = false;
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function toggleReaderMode() {
+    if (!canUseReaderMode) return;
+    try {
+      await invoke("toggle_reader_mode");
     } catch (error) {
       showError(error);
     }
@@ -1064,6 +1079,13 @@
         onclick={() => void runAction(isLoading ? "stop" : "reload")}
       >{isLoading ? "×" : "↻"}</button>
       <button class="icon-button home-button" aria-label="Home" title="Home" onclick={() => void runAction("go_home")}>⌂</button>
+      <button
+        class="icon-button"
+        aria-label="Toggle Reader Mode"
+        title="Reader Mode"
+        disabled={!canUseReaderMode}
+        onclick={() => void toggleReaderMode()}
+      >¶</button>
     </div>
 
     <form class="omnibox" onsubmit={(event) => { event.preventDefault(); void navigate(); }}>
