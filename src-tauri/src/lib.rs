@@ -2,7 +2,6 @@ mod adblock;
 mod extensions;
 pub mod nav;
 mod oneko;
-mod passwords;
 mod privacy;
 pub mod storage;
 mod tabs;
@@ -179,10 +178,6 @@ pub fn run() {
             storage::set_download_directory,
             storage::download_ask_where_to_save,
             storage::set_download_ask_where_to_save,
-            passwords::passwords_list,
-            passwords::passwords_save,
-            passwords::passwords_reveal,
-            passwords::passwords_delete,
             extensions::user_scripts_list,
             extensions::user_scripts_save,
             extensions::user_scripts_set_enabled,

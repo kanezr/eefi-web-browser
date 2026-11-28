@@ -199,14 +199,6 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         connection
             .execute_batch(
                 "BEGIN;
-                CREATE TABLE password_credentials (
-                    id INTEGER PRIMARY KEY,
-                    origin TEXT NOT NULL CHECK(length(origin) BETWEEN 1 AND 2048),
-                    encrypted_secret BLOB NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    updated_at INTEGER NOT NULL
-                );
-                CREATE INDEX password_credentials_origin ON password_credentials(origin);
                 PRAGMA user_version = 3;
                 COMMIT;",
             )
@@ -593,14 +585,6 @@ mod tests {
             .expect("check site allowlist table");
         assert_eq!(version, 6);
         assert_eq!(table_exists, 1);
-        let passwords_table_exists: i64 = connection
-            .query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'password_credentials'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("check protected password table");
-        assert_eq!(passwords_table_exists, 1);
         let site_permission_grants_exists: i64 = connection
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'site_permission_grants'",

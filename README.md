@@ -22,8 +22,6 @@ a custom rendering or JavaScript engine.
   optional user rules/lists, with a bounded set of cosmetic filters.
 - Private windows, optional HTTPS-only upgrades, per-site permission controls,
   cookie request controls, and controls for clearing cookies/cache.
-- A Windows DPAPI-protected password vault for manually saving, viewing, and
-  deleting credentials.
 - Print and Save as PDF, find-in-page (`Ctrl+F`), WebView2 DevTools (`F12`),
   user scripts, tab sleeping, and an in-app updater with stable and beta
   release channels.
@@ -51,10 +49,9 @@ current roadmap.
   from responses. Clear-on-exit currently covers cookies and disk cache, not
   all site storage or history. Private mode is not anonymity: websites and
   network providers can still observe normal connection data.
-- **The password vault does not autofill.** Passwords are protected with
-  Windows DPAPI, but automatic form filling, address/payment profiles, a master
-  password, and vault import/export are not implemented. Origin metadata is
-  stored for lookup.
+- **There is no password manager.** Existing profiles from older builds may
+  retain DPAPI-protected credential records, which this version cannot access
+  or delete.
 - **User scripts are powerful.** Enabled scripts run in the matching normal
   page context and are not isolated from that page's JavaScript. Only enable
   scripts you trust; they do not run in private windows or subframes.
@@ -90,9 +87,10 @@ releases can be installed in-app.
 
 Browser data such as bookmarks, history, downloads, settings, and saved session
 state is stored locally in the app's data directory. These SQLite records are
-not generally encrypted. Password credentials are separately protected with
-Windows DPAPI. Private windows use WebView2's incognito mode and do not persist
-their session tabs, history, or download metadata.
+not generally encrypted. Profiles created by earlier builds may contain
+DPAPI-protected password records that this version leaves untouched. Private
+windows use WebView2's incognito mode and do not persist their session tabs,
+history, or download metadata.
 
 The project does not include your existing browser profile in its source or
 release ZIP. Do not share your app data directory, database files, or

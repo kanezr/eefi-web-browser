@@ -37,6 +37,12 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 - Apply adblock engine URL rewrites and available redirect resources to
   intercepted WebView2 requests.
 
+### Removed
+
+- Remove the password manager UI, DPAPI vault commands, and page form
+  integration. Existing encrypted credential records in older profiles are
+  preserved and are no longer accessible from the browser.
+
 ### Known limitations
 
 - Ads stitched into the same media stream as the video may not be reliably

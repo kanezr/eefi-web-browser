@@ -434,7 +434,7 @@ impl BrowserState {
         &self.1.window_label
     }
 
-    fn is_private(&self) -> bool {
+    pub(super) fn is_private(&self) -> bool {
         self.1.is_private
     }
 
@@ -1076,11 +1076,11 @@ pub fn page_builder(
     let download_tab_id = tab_id.clone();
     let title_tab_id = tab_id;
     let download_location_for_hook = download_location;
-    WebviewBuilder::new(label, url)
+    let builder = WebviewBuilder::new(label, url)
         .devtools(true)
         .initialization_script_for_all_frames(DEVTOOLS_F12_SCRIPT)
-        .initialization_script(crate::oneko::initialization_script())
-        .on_page_load(move |page, payload| {
+        .initialization_script(crate::oneko::initialization_script());
+    builder.on_page_load(move |page, payload| {
             let url = payload.url().to_string();
             let finished = matches!(payload.event(), PageLoadEvent::Finished);
             if finished && !is_http_url(&url) {

@@ -8,7 +8,6 @@
     | "bookmarks"
     | "history"
     | "downloads"
-    | "passwords"
     | "privacy"
     | "settings"
     | "extensions"
@@ -46,8 +45,6 @@
     totalBytes: number | null;
     paused: boolean;
   };
-  type PasswordEntry = { id: number; origin: string; username: string; updatedAt: number };
-  type RevealedPassword = { origin: string; username: string; password: string };
   type PrivacyStatus = {
     httpsOnly: boolean;
     blockThirdPartyCookies: boolean;
@@ -118,9 +115,7 @@
   let downloads = $state<Download[]>([]);
   let downloadProgress = $state<Record<string, DownloadProgress>>({});
   let downloadControlPending = $state<Record<number, boolean>>({});
-  let passwords = $state<PasswordEntry[]>([]);
   let userScripts = $state<UserScript[]>([]);
-  let revealedPasswords = $state<Record<number, string>>({});
   let query = $state("");
   let error = $state("");
   let editId = $state<number | null>(null);
@@ -139,9 +134,6 @@
   let downloadDirectory = $state("");
   let askWhereToSave = $state(false);
   let importing = $state(false);
-  let passwordOrigin = $state("");
-  let passwordUsername = $state("");
-  let passwordValue = $state("");
   let scriptEditId = $state<number | null>(null);
   let scriptName = $state("");
   let scriptMatchPattern = $state("");
@@ -185,7 +177,6 @@
   let checkingForUpdates = $state(false);
   let updaterStatus = $state("");
   let appVersion = $state("");
-  let revealTimer: number | undefined;
 
   const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
   const dangerousExtensions = new Set([
@@ -240,14 +231,6 @@
       downloadProgress = Object.fromEntries(progress.map((entry) => [entry.path, entry]));
       downloadDirectory = directory;
       askWhereToSave = askPreference;
-    } catch (reason) {
-      reportError(reason);
-    }
-  }
-
-  async function loadPasswords() {
-    try {
-      passwords = await invoke<PasswordEntry[]>("passwords_list");
     } catch (reason) {
       reportError(reason);
     }
@@ -476,7 +459,6 @@
     if (view === "bookmarks") await loadBookmarks();
     if (view === "history") await loadHistory();
     if (view === "downloads") await loadDownloads();
-    if (view === "passwords") await loadPasswords();
     if (view === "privacy") await loadPrivacy();
     if (view === "settings") {
       await Promise.all([loadTabSleepSettings(), loadUpdaterSettings(), loadOnekoSettings()]);
@@ -691,7 +673,6 @@
       disposed = true;
       unlisten?.();
       unlistenProgress?.();
-      if (revealTimer !== undefined) window.clearTimeout(revealTimer);
     };
   });
 
@@ -992,65 +973,6 @@
     }
   }
 
-  async function savePassword() {
-    error = "";
-    try {
-      await invoke("passwords_save", {
-        origin: passwordOrigin,
-        username: passwordUsername,
-        password: passwordValue,
-      });
-      passwordUsername = "";
-      passwordValue = "";
-      revealedPasswords = {};
-      if (revealTimer !== undefined) window.clearTimeout(revealTimer);
-      await loadPasswords();
-    } catch (reason) {
-      reportError(reason);
-    }
-  }
-
-  async function togglePassword(entry: PasswordEntry) {
-    if (Object.hasOwn(revealedPasswords, entry.id)) {
-      const { [entry.id]: _hidden, ...remaining } = revealedPasswords;
-      revealedPasswords = remaining;
-      return;
-    }
-    try {
-      const credential = await invoke<RevealedPassword>("passwords_reveal", { id: entry.id });
-      revealedPasswords = { ...revealedPasswords, [entry.id]: credential.password };
-      if (revealTimer !== undefined) window.clearTimeout(revealTimer);
-      revealTimer = window.setTimeout(() => (revealedPasswords = {}), 15_000);
-    } catch (reason) {
-      reportError(reason);
-    }
-  }
-
-  async function deletePassword(id: number) {
-    try {
-      await invoke("passwords_delete", { id });
-      const { [id]: _hidden, ...remaining } = revealedPasswords;
-      revealedPasswords = remaining;
-      await loadPasswords();
-    } catch (reason) {
-      reportError(reason);
-    }
-  }
-
-  function generatePassword() {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%_-+";
-    const limit = Math.floor(256 / alphabet.length) * alphabet.length;
-    let generated = "";
-    while (generated.length < 20) {
-      const bytes = crypto.getRandomValues(new Uint8Array(32));
-      for (const byte of bytes) {
-        if (byte < limit) generated += alphabet[byte % alphabet.length];
-        if (generated.length === 20) break;
-      }
-    }
-    passwordValue = generated;
-  }
-
   function dateLabel(seconds: number) {
     return new Date(seconds * 1000).toLocaleString();
   }
@@ -1067,9 +989,7 @@
             ? "History"
             : view === "downloads"
               ? "Downloads"
-              : view === "passwords"
-                ? "Password vault"
-                : view === "extensions"
+              : view === "extensions"
                   ? "User scripts"
                   : view === "settings"
                     ? "Settings"
@@ -1279,37 +1199,6 @@
         </article>
       {:else}
         <p class="empty-state">No downloads yet.</p>
-      {/each}
-    </div>
-  {:else if view === "passwords"}
-    <div class="vault-notice">
-      Passwords are encrypted with Windows Data Protection for this Windows account. They are never used to fill websites.
-    </div>
-    <form class="password-form" onsubmit={(event) => { event.preventDefault(); void savePassword(); }}>
-      <input bind:value={passwordOrigin} type="url" placeholder="https://example.com" aria-label="Website origin" required />
-      <input bind:value={passwordUsername} placeholder="Username" aria-label="Username" autocomplete="off" maxlength="512" required />
-      <input bind:value={passwordValue} type="password" placeholder="Password" aria-label="Password" autocomplete="new-password" maxlength="4096" required />
-      <button type="button" onclick={generatePassword}>Generate</button>
-      <button class="primary-button" type="submit">Save password</button>
-    </form>
-    <div class="result-list password-list">
-      {#each passwords as entry (entry.id)}
-        <article class="result-row">
-          <div class="result-copy">
-            <strong>{entry.origin}</strong>
-            <span>{entry.username}</span>
-            <small>Updated {dateLabel(entry.updatedAt)}</small>
-            {#if Object.hasOwn(revealedPasswords, entry.id)}
-              <code class="revealed-password">{revealedPasswords[entry.id]}</code>
-            {/if}
-          </div>
-          <button onclick={() => void togglePassword(entry)}>
-            {Object.hasOwn(revealedPasswords, entry.id) ? "Hide" : "Reveal"}
-          </button>
-          <button class="danger-button" onclick={() => void deletePassword(entry.id)}>Delete</button>
-        </article>
-      {:else}
-        <p class="empty-state">No passwords saved in this Windows account vault.</p>
       {/each}
     </div>
   {:else if view === "extensions"}
@@ -1753,7 +1642,6 @@
   .download-ask-setting input { width: 15px; height: 15px; margin: 0; accent-color: #536fce; }
   .download-progress { width: min(420px, 100%); height: 8px; accent-color: #536fce; }
   .download-row .result-copy { gap: 6px; }
-  .vault-notice { margin-bottom: 12px; color: #586174; }
   .privacy-settings { max-width: 720px; }
   .privacy-card { padding: 18px; border: 1px solid #dfe4ec; border-radius: 12px; background: #fff; }
   .performance-card { display: grid; justify-items: start; gap: 10px; }
@@ -1781,9 +1669,6 @@
   .custom-filters-card label { display: grid; gap: 7px; margin: 12px 0; }
   .custom-filters-card textarea { width: 100%; resize: vertical; font: 12px/1.5 ui-monospace, Consolas, monospace; }
   .custom-filters-card button + p { margin: 10px 0 0; }
-  .password-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) auto auto; gap: 8px; margin-bottom: 14px; }
-  .password-list { flex: 1; }
-  .revealed-password { overflow-wrap: anywhere; color: #38425b; }
   .user-script-warning { padding: 11px 13px; margin-bottom: 12px; color: #713e19; background: #fff2dd; border-radius: 8px; line-height: 1.45; }
   .user-script-editor { padding: 13px; margin-bottom: 12px; background: #fff; border: 1px solid #e0e3e9; border-radius: 11px; }
   .user-script-fields { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 2fr); gap: 9px; }
@@ -1809,15 +1694,9 @@
   .tab-group-members label span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .tab-group-members label small { flex: 0 0 auto; color: #758094; }
   .tab-group-members input { width: 15px; height: 15px; flex: 0 0 auto; margin: 0; accent-color: #4459e8; }
-  .vault-notice { margin-bottom: 12px; color: #586174; }
-  .password-form { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) auto auto; gap: 8px; margin-bottom: 14px; }
-  .password-list { flex: 1; }
-  .revealed-password { overflow-wrap: anywhere; color: #38425b; }
   @media (max-width: 900px) {
     .library { padding: 16px; }
     .library-columns { grid-template-columns: minmax(130px, 180px) minmax(0, 1fr); }
-    .password-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .password-form input:first-child { grid-column: 1 / -1; }
     .user-script-fields { grid-template-columns: 1fr; }
     .user-script-source { grid-column: auto; }
     .user-script-actions { justify-content: flex-start; }

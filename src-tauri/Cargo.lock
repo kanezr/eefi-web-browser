@@ -985,7 +985,6 @@ dependencies = [
  "url",
  "webview2-com",
  "windows",
- "zeroize",
 ]
 
 [[package]]

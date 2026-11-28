@@ -39,7 +39,6 @@
     | "bookmarks"
     | "history"
     | "downloads"
-    | "passwords"
     | "privacy"
     | "settings"
     | "extensions"
@@ -144,6 +143,14 @@
   function hostForUrl(url: string) {
     try {
       return new URL(url).hostname;
+    } catch {
+      return "";
+    }
+  }
+
+  function originForUrl(url: string) {
+    try {
+      return new URL(url).origin;
     } catch {
       return "";
     }
@@ -1173,7 +1180,6 @@
     <button class="icon-button library-action" aria-label="Bookmarks" title="Bookmarks" onclick={() => void openManager("bookmarks")}>▤</button>
     <button class="icon-button library-action" aria-label="History" title="History" onclick={() => void openManager("history")}>◷</button>
     <button class="icon-button library-action" aria-label="Downloads" title="Downloads" onclick={() => void openManager("downloads")}>↓</button>
-    <button class="icon-button library-action" aria-label="Passwords" title="Password vault" onclick={() => void openManager("passwords")}>⚿</button>
     <button class="icon-button library-action" aria-label="Privacy settings" title="Privacy settings" onclick={() => void openManager("privacy")}>⚙</button>
     <button
       class:oneko-on={onekoSettings.enabled}
@@ -1232,7 +1238,6 @@
           <button role="menuitem" onclick={() => void openManager("bookmarks")}>Bookmarks</button>
           <button role="menuitem" onclick={() => void openManager("history")}>History</button>
           <button role="menuitem" onclick={() => void openManager("downloads")}>Downloads</button>
-          <button role="menuitem" onclick={() => void openManager("passwords")}>Password vault</button>
           <button role="menuitem" onclick={() => void openManager("extensions")}>User scripts</button>
           <button role="menuitem" onclick={() => void openManager("tab-groups")}>Tab groups</button>
           <button role="menuitem" onclick={() => void openManager("settings")}>Settings</button>
