@@ -40,6 +40,12 @@
     startedAt: number;
     finishedAt: number | null;
   };
+  type DownloadProgress = {
+    path: string;
+    bytesReceived: number;
+    totalBytes: number | null;
+    paused: boolean;
+  };
   type PasswordEntry = { id: number; origin: string; username: string; updatedAt: number };
   type RevealedPassword = { origin: string; username: string; password: string };
   type PrivacyStatus = {
@@ -110,6 +116,8 @@
   let folders = $state<Folder[]>([]);
   let history = $state<HistoryEntry[]>([]);
   let downloads = $state<Download[]>([]);
+  let downloadProgress = $state<Record<string, DownloadProgress>>({});
+  let downloadControlPending = $state<Record<number, boolean>>({});
   let passwords = $state<PasswordEntry[]>([]);
   let userScripts = $state<UserScript[]>([]);
   let revealedPasswords = $state<Record<number, string>>({});
@@ -129,6 +137,7 @@
   let clearingData = $state(false);
   let confirmDangerousId = $state<number | null>(null);
   let downloadDirectory = $state("");
+  let askWhereToSave = $state(false);
   let importing = $state(false);
   let passwordOrigin = $state("");
   let passwordUsername = $state("");
@@ -221,8 +230,16 @@
 
   async function loadDownloads() {
     try {
-      downloads = await invoke<Download[]>("downloads_list", { limit: 250 });
-      downloadDirectory = await invoke<string>("download_directory");
+      const [items, progress, directory, askPreference] = await Promise.all([
+        invoke<Download[]>("downloads_list", { limit: 250 }),
+        invoke<DownloadProgress[]>("downloads_progress"),
+        invoke<string>("download_directory"),
+        invoke<boolean>("download_ask_where_to_save"),
+      ]);
+      downloads = items;
+      downloadProgress = Object.fromEntries(progress.map((entry) => [entry.path, entry]));
+      downloadDirectory = directory;
+      askWhereToSave = askPreference;
     } catch (reason) {
       reportError(reason);
     }
@@ -655,15 +672,25 @@
   onMount(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
+    let unlistenProgress: (() => void) | undefined;
     void listen("browser:downloads-updated", () => {
       if (view === "downloads") void loadDownloads();
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
     });
+    void listen<DownloadProgress>("browser:download-progress", ({ payload }) => {
+      if (view === "downloads") {
+        downloadProgress = { ...downloadProgress, [payload.path]: payload };
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlistenProgress = stop;
+    });
     return () => {
       disposed = true;
       unlisten?.();
+      unlistenProgress?.();
       if (revealTimer !== undefined) window.clearTimeout(revealTimer);
     };
   });
@@ -891,8 +918,59 @@
     }
   }
 
+  async function updateAskWhereToSave(event: Event) {
+    const enabled = (event.currentTarget as HTMLInputElement).checked;
+    const previous = askWhereToSave;
+    askWhereToSave = enabled;
+    try {
+      await invoke("set_download_ask_where_to_save", { enabled });
+    } catch (reason) {
+      askWhereToSave = previous;
+      reportError(reason);
+    }
+  }
+
+  async function controlDownload(download: Download, action: "pause" | "resume" | "cancel") {
+    if (downloadControlPending[download.id]) return;
+    downloadControlPending = { ...downloadControlPending, [download.id]: true };
+    try {
+      await invoke("download_control", { id: download.id, action });
+      if (action === "pause" || action === "resume") {
+        const progress = downloadProgress[download.path];
+        if (progress) {
+          downloadProgress = {
+            ...downloadProgress,
+            [download.path]: { ...progress, paused: action === "pause" },
+          };
+        }
+      }
+    } catch (reason) {
+      reportError(reason);
+    } finally {
+      const { [download.id]: _pending, ...remaining } = downloadControlPending;
+      downloadControlPending = remaining;
+    }
+  }
+
+  function fileExtension(path: string) {
+    const filename = path.split(/[\\/]/).pop() ?? "";
+    return filename.split(".").pop()?.toLowerCase() ?? "";
+  }
+
+  function formatBytes(bytes: number) {
+    if (bytes < 1024) return `${bytes} B`;
+    const units = ["KB", "MB", "GB", "TB"];
+    let value = bytes / 1024;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex += 1;
+    }
+    return `${value.toFixed(1)} ${units[unitIndex]}`;
+  }
+
   async function openDownload(download: Download) {
-    if (dangerousExtensions.has(download.path.split(".").pop()?.toLowerCase() ?? "")) {
+    if (dangerousExtensions.has(fileExtension(download.path))) {
       if (confirmDangerousId !== download.id) {
         confirmDangerousId = download.id;
         return;
@@ -1133,6 +1211,10 @@
       <label for="download-directory">Save files to</label>
       <input id="download-directory" bind:value={downloadDirectory} aria-label="Download folder" />
       <button class="primary-button" onclick={updateDownloadDirectory}>Save location</button>
+      <label class="download-ask-setting">
+        <input type="checkbox" checked={askWhereToSave} onchange={updateAskWhereToSave} />
+        Ask where to save each file
+      </label>
       <button class="danger-button" onclick={() => void invoke("downloads_clear").then(loadDownloads).catch(reportError)}>
         Clear list
       </button>
@@ -1140,16 +1222,54 @@
     <div class="result-list">
       {#each downloads as download (download.id)}
         {@const filename = download.path.split(/[\\/]/).pop() ?? ""}
-        {@const extension = filename.split(".").pop()?.toLowerCase() ?? ""}
+        {@const extension = fileExtension(download.path)}
         {@const dangerous = dangerousExtensions.has(extension)}
+        {@const progress = downloadProgress[download.path]}
         <article class="result-row download-row">
           <div class="result-copy">
             <strong>{filename}</strong>
             <span>{download.url}</span>
-            <small>{download.status} · {dateLabel(download.startedAt)}</small>
+            <small>
+              {download.status === "downloading" && progress?.paused
+                ? "Paused"
+                : download.status}
+              · {dateLabel(download.startedAt)}
+              {#if download.status === "downloading" && progress}
+                · {formatBytes(progress.bytesReceived)}
+                {#if progress.totalBytes !== null}
+                  of {formatBytes(progress.totalBytes)}
+                {/if}
+              {/if}
+            </small>
+            {#if download.status === "downloading"}
+                <progress
+                  class="download-progress"
+                  max={progress?.totalBytes ?? undefined}
+                  value={progress?.totalBytes ? progress.bytesReceived : undefined}
+                  aria-label={`Download progress for ${filename}`}
+                ></progress>
+            {/if}
             {#if dangerous}<small class="safety-warning">This file type can run code. Only open it if you trust its source.</small>{/if}
             {#if confirmDangerousId === download.id}<small class="safety-warning">Click “Open anyway” to confirm.</small>{/if}
           </div>
+          {#if download.status === "downloading"}
+            {#if progress?.paused}
+              <button
+                disabled={downloadControlPending[download.id]}
+                onclick={() => void controlDownload(download, "resume")}
+              >Resume</button>
+            {:else}
+              <button
+                disabled={downloadControlPending[download.id]}
+                onclick={() => void controlDownload(download, "pause")}
+              >Pause</button>
+            {/if}
+            <button
+              class="danger-button"
+              disabled={downloadControlPending[download.id]}
+              onclick={() => void controlDownload(download, "cancel")}
+            >Cancel</button>
+          {/if}
           {#if download.status === "complete"}
             <button class:danger-button={dangerous} onclick={() => void openDownload(download)}>
               {dangerous && confirmDangerousId === download.id ? "Open anyway" : "Open"}
@@ -1161,10 +1281,6 @@
         <p class="empty-state">No downloads yet.</p>
       {/each}
     </div>
-    <p class="download-note">
-      Downloads run in WebView2. This integration provides start/completion events; byte progress, pause/resume,
-      cancel, and “ask where to save” are not exposed by Tauri’s current download hook.
-    </p>
   {:else if view === "passwords"}
     <div class="vault-notice">
       Passwords are encrypted with Windows Data Protection for this Windows account. They are never used to fill websites.
@@ -1632,8 +1748,11 @@
   .clear-data-option input { width: 16px; height: 16px; margin: 0; accent-color: #4459e8; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
   .download-location label { color: #4a5261; font-weight: 600; }
-  .download-location input { flex: 1; }
-  .download-note { color: #798295; font-size: 11px; }
+  .download-location #download-directory { flex: 1; }
+  .download-ask-setting { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+  .download-ask-setting input { width: 15px; height: 15px; margin: 0; accent-color: #536fce; }
+  .download-progress { width: min(420px, 100%); height: 8px; accent-color: #536fce; }
+  .download-row .result-copy { gap: 6px; }
   .vault-notice { margin-bottom: 12px; color: #586174; }
   .privacy-settings { max-width: 720px; }
   .privacy-card { padding: 18px; border: 1px solid #dfe4ec; border-radius: 12px; background: #fff; }

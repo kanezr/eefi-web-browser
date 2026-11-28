@@ -321,9 +321,34 @@ mod tests {
         )
         .expect("record download");
         finish_download(&connection, download_id, true, 1_700_000_010).expect("complete download");
+        insert_download(
+            &connection,
+            "https://example.com/active.zip",
+            "C:/Downloads/active.zip",
+            1_700_000_020,
+        )
+        .expect("record active download");
         assert_eq!(
             list_downloads(&connection, 10).expect("list downloads")[0].status,
-            "complete"
+            "downloading"
+        );
+        assert_eq!(
+            clear_downloads(&connection).expect("clear completed downloads"),
+            1
+        );
+        assert_eq!(
+            list_downloads(&connection, 10)
+                .expect("active download remains")
+                .len(),
+            1
+        );
+        set_setting(&connection, "download.ask_where_to_save", "true")
+            .expect("save download prompt preference");
+        assert_eq!(
+            get_setting(&connection, "download.ask_where_to_save")
+                .expect("load download prompt preference")
+                .as_deref(),
+            Some("true")
         );
 
         save_session(

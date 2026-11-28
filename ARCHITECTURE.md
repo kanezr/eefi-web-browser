@@ -36,9 +36,8 @@ Stage 1 includes working native tabs, drag reordering, omnibox URL/search routin
 
 - SQLite-backed bookmarks and folders, bookmarks bar, search, edit/delete, and Netscape HTML import/export. HTML import/export currently treats bookmarks as a flat list; it does not preserve folder nesting.
 - Searchable history with site deletion, time-range clearing, and a clear-data dialog. The dialog can remove history, cookies/site data, and disk cache; history supports a time range, while cookies/cache currently clear for all time.
-- Download records from WebView2 start/completion events, a configurable destination folder, open/reveal actions, and warnings for executable file extensions.
+- Download records from WebView2 start/completion events, byte progress, pause/resume/cancel controls, a configurable destination folder, optional Windows Save As prompts, open/reveal actions, and warnings for executable file extensions. Progress and operation handles are session-only; SQLite schema version 6 remains unchanged. Active rows are retained when clearing completed records.
 - Session tabs and active-tab state are saved off the UI thread and restored on startup. History, bookmarks, downloads, and session data are currently stored locally without encryption.
-- Tauri’s current download hook does not expose byte progress or pause/resume/cancel controls, and it cannot present an “ask where to save” dialog in the synchronous request callback. Those controls are not claimed as implemented.
 
 Run the app with `npm run tauri -- dev`. Validate the UI with `npm run check` and `npm run build`, then run Rust URL and storage tests with `cargo test --manifest-path src-tauri\Cargo.toml`.
 

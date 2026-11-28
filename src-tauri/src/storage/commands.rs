@@ -10,7 +10,8 @@ use super::{
     delete_history_before, delete_history_for_site, finish_download_for_request, get_download,
     get_setting, is_bookmarked, list_bookmark_folders, list_bookmarks, list_downloads,
     list_history, recover_downloads, set_setting, update_bookmark, Bookmark, BookmarkFolder,
-    DownloadEntry, DownloadLocation, HistoryEntry, StorageService,
+    DownloadEntry, DownloadLocation, DownloadProgress, DownloadRuntime, HistoryEntry,
+    StorageService,
 };
 
 #[derive(Debug, Deserialize)]
@@ -183,6 +184,41 @@ pub async fn downloads_list(
 }
 
 #[tauri::command]
+pub fn downloads_progress(
+    runtime: State<'_, DownloadRuntime>,
+) -> Result<Vec<DownloadProgress>, String> {
+    runtime.active()
+}
+
+#[tauri::command]
+pub async fn download_control(
+    app: AppHandle,
+    id: i64,
+    action: String,
+    storage: State<'_, StorageService>,
+    runtime: State<'_, DownloadRuntime>,
+) -> Result<(), String> {
+    if !matches!(action.as_str(), "pause" | "resume" | "cancel") {
+        return Err("unsupported download action".to_string());
+    }
+    let download = storage
+        .with_connection(move |connection| get_download(connection, id))
+        .await?;
+    if download.status != "downloading" {
+        return Err("Only active downloads can be controlled.".to_string());
+    }
+    if !crate::tabs::control_download_operation(&app, &runtime, &download.path, &action)? {
+        return Err("Download is no longer active.".to_string());
+    }
+    if action == "pause" {
+        runtime.set_paused(&download.path, true)?;
+    } else if action == "resume" {
+        runtime.set_paused(&download.path, false)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn downloads_clear(storage: State<'_, StorageService>) -> Result<usize, String> {
     storage
         .with_connection(|connection| super::downloads::clear_downloads(connection))
@@ -259,6 +295,39 @@ pub async fn download_directory(
         return Ok(path.to_string_lossy().into_owned());
     }
     Ok(location.current()?.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+pub async fn download_ask_where_to_save(
+    storage: State<'_, StorageService>,
+    location: State<'_, DownloadLocation>,
+) -> Result<bool, String> {
+    let setting = storage
+        .with_connection(|connection| get_setting(connection, "download.ask_where_to_save"))
+        .await?;
+    let enabled = match setting.as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(_) => return Err("Stored download prompt preference is invalid.".to_string()),
+    };
+    location.set_ask_where_to_save(enabled);
+    Ok(enabled)
+}
+
+#[tauri::command]
+pub async fn set_download_ask_where_to_save(
+    enabled: bool,
+    storage: State<'_, StorageService>,
+    location: State<'_, DownloadLocation>,
+) -> Result<(), String> {
+    let value = if enabled { "true" } else { "false" }.to_string();
+    storage
+        .with_connection(move |connection| {
+            set_setting(connection, "download.ask_where_to_save", &value)
+        })
+        .await?;
+    location.set_ask_where_to_save(enabled);
+    Ok(())
 }
 
 #[tauri::command]

@@ -41,6 +41,7 @@ pub fn run() {
             let download_directory = app.path().download_dir()?;
             std::fs::create_dir_all(&download_directory)?;
             app.manage(storage::DownloadLocation::new(download_directory));
+            app.manage(storage::DownloadRuntime::default());
             let window = app
                 .get_window("main")
                 .ok_or("main browser window is missing")?;
@@ -99,6 +100,8 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             tabs::attach_url_history_tracking(app_handle, &initial_page, state)
                 .map_err(std::io::Error::other)?;
+            tabs::attach_download_tracking(app.handle(), &initial_page)
+                .map_err(std::io::Error::other)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -109,6 +112,7 @@ pub fn run() {
             tabs::open_find_bar,
             tabs::find_in_page,
             tabs::open_reopen_closed_tab,
+            tabs::resolve_download_save_path,
             tabs::toggle_devtools,
             tabs::print_page,
             tabs::save_page_as_pdf,
@@ -163,12 +167,16 @@ pub fn run() {
             storage::history_delete_site,
             storage::history_clear,
             storage::downloads_list,
+            storage::downloads_progress,
             storage::downloads_clear,
             storage::downloads_recover,
+            storage::download_control,
             storage::download_open,
             storage::download_reveal,
             storage::download_directory,
             storage::set_download_directory,
+            storage::download_ask_where_to_save,
+            storage::set_download_ask_where_to_save,
             passwords::passwords_list,
             passwords::passwords_save,
             passwords::passwords_reveal,

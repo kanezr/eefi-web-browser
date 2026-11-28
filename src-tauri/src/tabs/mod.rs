@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use std::cell::RefCell;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -20,8 +22,8 @@ use crate::nav::{parse_input, ParsedInput};
 use crate::privacy::{self, PrivacyService};
 use crate::storage::{
     get_setting, load_session, record_download_finish, record_download_start, record_history,
-    set_setting, update_latest_title, DownloadLocation, SessionGroup, SessionSnapshot, SessionTab,
-    StorageService,
+    set_setting, update_latest_title, DownloadLocation, DownloadProgress, DownloadPromptInfo,
+    DownloadRuntime, SessionGroup, SessionSnapshot, SessionTab, StorageService,
 };
 
 static PRIVATE_WINDOW_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -31,9 +33,233 @@ const TAB_SLEEP_TIMEOUT_UNINITIALIZED: u64 = u64::MAX;
 const TAB_SLEEP_SCAN_INTERVAL_SECONDS: u64 = 5;
 const TAB_SLEEP_TIMEOUT_OPTIONS: &[u64] = &[0, 60, 300, 900, 1800, 3600];
 const MAX_CLOSED_TABS: usize = 10;
+#[cfg(windows)]
+type DownloadOperation =
+    webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation;
+#[cfg(windows)]
+type DownloadStartingArgs =
+    webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadStartingEventArgs;
+#[cfg(windows)]
+type DownloadDeferral = webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Deferral;
+
+#[cfg(windows)]
+thread_local! {
+    static DOWNLOAD_OPERATIONS: RefCell<HashMap<String, DownloadOperation>> =
+        RefCell::new(HashMap::new());
+    static DOWNLOAD_SAVE_PROMPTS: RefCell<HashMap<String, (DownloadStartingArgs, DownloadDeferral)>> =
+        RefCell::new(HashMap::new());
+}
+
 const TAB_GROUP_COLORS: &[&str] = &[
     "#4f7ff0", "#8d63d8", "#159b9a", "#2d9a65", "#d49a2b", "#e17a32", "#d75059", "#788397",
 ];
+
+#[cfg(windows)]
+fn retain_download_operation(id: String, operation: &DownloadOperation) {
+    DOWNLOAD_OPERATIONS.with(|operations| {
+        operations.borrow_mut().insert(id, operation.clone());
+    });
+}
+
+#[cfg(windows)]
+fn release_download_operation(id: &str) {
+    DOWNLOAD_OPERATIONS.with(|operations| {
+        operations.borrow_mut().remove(id);
+    });
+}
+
+#[cfg(windows)]
+fn retain_download_save_prompt(
+    id: String,
+    args: &DownloadStartingArgs,
+    deferral: &DownloadDeferral,
+) {
+    DOWNLOAD_SAVE_PROMPTS.with(|prompts| {
+        prompts
+            .borrow_mut()
+            .insert(id, (args.clone(), deferral.clone()));
+    });
+}
+
+#[cfg(windows)]
+fn take_download_save_prompt(id: &str) -> Option<(DownloadStartingArgs, DownloadDeferral)> {
+    DOWNLOAD_SAVE_PROMPTS.with(|prompts| prompts.borrow_mut().remove(id))
+}
+
+#[cfg(windows)]
+fn resolve_download_prompt_on_current_thread(
+    runtime: &DownloadRuntime,
+    id: &str,
+    path: Option<String>,
+) -> Result<(), String> {
+    use windows::core::HSTRING;
+
+    let Some((args, deferral)) = take_download_save_prompt(id) else {
+        return Err("WebView2 download save prompt is no longer available.".to_string());
+    };
+    let prompt = match runtime.take_prompt(id) {
+        Ok(prompt) => prompt,
+        Err(error) => {
+            if let Err(cancel_error) = unsafe { args.SetCancel(true) } {
+                eprintln!(
+                    "could not cancel download after its save request expired: {cancel_error}"
+                );
+            }
+            if let Err(complete_error) = unsafe { deferral.Complete() } {
+                eprintln!("could not complete expired download save request: {complete_error}");
+            }
+            return Err(error);
+        }
+    };
+
+    let cancel_requested = path.is_none();
+    let apply_result = if let Some(path) = path {
+        let selected_path = HSTRING::from(path.as_str());
+        (|| -> Result<(), String> {
+            unsafe {
+                args.SetResultFilePath(&selected_path)
+                    .map_err(|error| format!("could not set download destination: {error}"))?;
+            }
+            runtime.select_prompt_destination(&prompt, path)
+        })()
+    } else {
+        Ok(())
+    };
+    let cancel_requested = cancel_requested || apply_result.is_err();
+    let cancel_result = if cancel_requested {
+        match unsafe { args.SetCancel(true) } {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                eprintln!("could not cancel download after save prompt: {error}");
+                Err(format!(
+                    "could not cancel download after save prompt: {error}"
+                ))
+            }
+        }
+    } else {
+        Ok(())
+    };
+    if cancel_requested {
+        if let Err(error) = runtime.cancel_prompt(&prompt) {
+            eprintln!("could not clear canceled download state: {error}");
+        }
+    }
+    let complete_result = unsafe { deferral.Complete() }
+        .map_err(|error| format!("could not complete download save prompt: {error}"));
+    apply_result.and(cancel_result).and(complete_result)
+}
+
+pub fn control_download_operation(
+    app: &AppHandle,
+    runtime: &DownloadRuntime,
+    path: &str,
+    action: &str,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        let Some((page_label, operation_id)) = runtime.control_target(path)? else {
+            return Ok(false);
+        };
+        let page = app
+            .get_webview(&page_label)
+            .ok_or_else(|| "The download's browser tab is no longer available.".to_string())?;
+        let cancel_requested = action == "cancel";
+        if cancel_requested {
+            runtime.set_cancel_requested(path, true)?;
+        }
+        let clear_cancel_marker = || {
+            if cancel_requested {
+                if let Err(error) = runtime.set_cancel_requested(path, false) {
+                    eprintln!("could not clear canceled-download marker: {error}");
+                }
+            }
+        };
+        let action = action.to_string();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        if let Err(error) = page.with_webview(move |_| {
+            let result = DOWNLOAD_OPERATIONS.with(|operations| {
+                let operations = operations.borrow();
+                let operation = operations
+                    .get(&operation_id)
+                    .ok_or_else(|| "Download is no longer active.".to_string())?;
+                unsafe {
+                    match action.as_str() {
+                        "pause" => operation
+                            .Pause()
+                            .map_err(|error| format!("could not pause download: {error}")),
+                        "resume" => operation
+                            .Resume()
+                            .map_err(|error| format!("could not resume download: {error}")),
+                        "cancel" => operation
+                            .Cancel()
+                            .map_err(|error| format!("could not cancel download: {error}")),
+                        _ => Err("unsupported download action".to_string()),
+                    }
+                }
+            });
+            if sender.send(result).is_err() {
+                eprintln!("could not return download control result");
+            }
+        }) {
+            clear_cancel_marker();
+            return Err(format!("could not schedule download control: {error}"));
+        }
+        let result = match receiver.recv() {
+            Ok(result) => result,
+            Err(error) => {
+                clear_cancel_marker();
+                return Err(format!(
+                    "could not receive download control result: {error}"
+                ));
+            }
+        };
+        if let Err(error) = result {
+            clear_cancel_marker();
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (app, runtime, path, action);
+        Err("download controls are currently supported on Windows only".to_string())
+    }
+}
+
+pub fn resolve_download_prompt(
+    app: &AppHandle,
+    runtime: &DownloadRuntime,
+    id: &str,
+    path: Option<String>,
+) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let page_label = runtime.prompt_target(id)?;
+        let page = app
+            .get_webview(&page_label)
+            .ok_or_else(|| "The download's browser tab is no longer available.".to_string())?;
+        let runtime = runtime.clone();
+        let id = id.to_string();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        page.with_webview(move |_| {
+            let result = resolve_download_prompt_on_current_thread(&runtime, &id, path);
+            if sender.send(result).is_err() {
+                eprintln!("could not return download save prompt result");
+            }
+        })
+        .map_err(|error| format!("could not schedule download save prompt: {error}"))?;
+        receiver
+            .recv()
+            .map_err(|error| format!("could not receive download save prompt result: {error}"))?
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (app, runtime, id, path);
+        Err("download save prompts are currently supported on Windows only".to_string())
+    }
+}
 
 const DEVTOOLS_F12_SCRIPT: &str = r#"
 document.addEventListener('keydown', event => {
@@ -129,6 +355,14 @@ struct PageEvent {
     tab_id: String,
     url: String,
     title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DownloadSavePromptEvent {
+    prompt_id: String,
+    url: String,
+    suggested_path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -748,6 +982,7 @@ fn create_secondary_window(
         eprintln!("[browser-window:{label}] initial page webview attached");
         adblock::attach_to_webview(&page, adblock_service, privacy_service)?;
         attach_url_history_tracking(app.clone(), &page, state.clone())?;
+        attach_download_tracking(&app, &page)?;
         if initial_tab.url != "about:blank" {
             let target = safe_session_url(&initial_tab.url)?;
             page.navigate(target)
@@ -1005,6 +1240,8 @@ pub fn page_builder(
             DownloadEvent::Requested { url, destination } => {
                 match download_destination(&download_location_for_hook, destination) {
                     Ok(path) => {
+                        let ask_where_to_save =
+                            download_location_for_hook.ask_where_to_save();
                         *destination = path.clone();
                         match download_state.0.lock() {
                             Ok(mut data) => {
@@ -1015,7 +1252,7 @@ pub fn page_builder(
                                 return false;
                             }
                         }
-                        if is_private {
+                        if is_private || ask_where_to_save {
                             return true;
                         }
                         let requested_url = url.to_string();
@@ -1085,6 +1322,7 @@ pub fn page_builder(
                             Ok(false) if attempt < 19 => {
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                             }
+                            Ok(false) if !success => return,
                             Ok(false) => {
                                 eprintln!(
                                     "download completion arrived without a matching start event"
@@ -1104,6 +1342,384 @@ pub fn page_builder(
         })
         .on_new_window(|_url, _features| NewWindowResponse::Deny)
         .incognito(is_private)
+}
+
+pub fn attach_download_tracking(app: &AppHandle, webview: &Webview<Wry>) -> Result<(), String> {
+    let is_private = webview.window().label().starts_with("private-");
+
+    #[cfg(windows)]
+    {
+        use std::sync::mpsc;
+
+        use webview2_com::{
+            take_pwstr, DownloadStartingEventHandler,
+            Microsoft::Web::WebView2::Win32::ICoreWebView2_4,
+        };
+        use windows::core::{Interface, PWSTR};
+
+        let app = app.clone();
+        let window_label = webview.window().label().to_string();
+        let page_label = webview.label().to_string();
+        let (result_sender, result_receiver) = mpsc::sync_channel(1);
+        webview
+            .with_webview(move |platform| {
+                let result = (|| -> Result<(), String> {
+                    unsafe {
+                        let core = platform
+                            .controller()
+                            .CoreWebView2()
+                            .map_err(|error| format!("could not access WebView2: {error}"))?;
+                        let core_4 = core
+                            .cast::<ICoreWebView2_4>()
+                            .map_err(|error| format!("WebView2 downloads are unavailable: {error}"))?;
+                        let app_for_download = app.clone();
+                        let event_window_label = window_label.clone();
+                        let event_page_label = page_label.clone();
+                        let handler = DownloadStartingEventHandler::create(Box::new(
+                            move |_, args| {
+                                let Some(args) = args else {
+                                    return Ok(());
+                                };
+                                let mut cancelled = windows::core::BOOL(0);
+                                args.Cancel(&mut cancelled)?;
+                                if cancelled.as_bool() {
+                                    return Ok(());
+                                }
+                                let operation = args.DownloadOperation()?;
+                                let mut result_path = PWSTR::null();
+                                operation.ResultFilePath(&mut result_path)?;
+                                let path = take_pwstr(result_path);
+                                let ask_where_to_save = app_for_download
+                                    .state::<DownloadLocation>()
+                                    .inner()
+                                    .ask_where_to_save();
+                                if path.is_empty() {
+                                    if ask_where_to_save {
+                                        eprintln!("WebView2 did not provide a suggested download path");
+                                        if let Err(error) = args.SetCancel(true) {
+                                            eprintln!("could not cancel download without a suggested path: {error}");
+                                        }
+                                    }
+                                    return Ok(());
+                                }
+                                let runtime = app_for_download.state::<DownloadRuntime>().inner().clone();
+                                let path_key = Arc::new(Mutex::new(path.clone()));
+                                if !is_private {
+                                    let operation_id = match runtime
+                                        .register(path.clone(), event_page_label.clone())
+                                    {
+                                        Ok(id) => id,
+                                        Err(error) => {
+                                            eprintln!("could not track active download: {error}");
+                                            if ask_where_to_save {
+                                                if let Err(cancel_error) = args.SetCancel(true) {
+                                                    eprintln!("could not cancel untracked download: {cancel_error}");
+                                                }
+                                            }
+                                            return Ok(());
+                                        }
+                                    };
+                                    retain_download_operation(operation_id.clone(), &operation);
+                                    if let Err(error) = attach_download_operation_handlers(
+                                        app_for_download.clone(),
+                                        runtime.clone(),
+                                        &operation,
+                                        operation_id.clone(),
+                                        path_key.clone(),
+                                    ) {
+                                        eprintln!("could not attach download progress handlers: {error}");
+                                        release_download_operation(&operation_id);
+                                        let _ = runtime.remove(&path);
+                                    }
+                                }
+                                if ask_where_to_save {
+                                    let mut uri = PWSTR::null();
+                                    if let Err(error) = operation.Uri(&mut uri) {
+                                        eprintln!("could not read download URL for save prompt: {error}");
+                                        if let Err(cancel_error) = args.SetCancel(true) {
+                                            eprintln!("could not cancel download without URL: {cancel_error}");
+                                        }
+                                        return Ok(());
+                                    }
+                                    let info = DownloadPromptInfo {
+                                        url: take_pwstr(uri),
+                                        suggested_path: path.clone(),
+                                        is_private,
+                                    };
+                                    let deferral = match args.GetDeferral() {
+                                        Ok(deferral) => deferral,
+                                        Err(error) => {
+                                            eprintln!("could not defer download save request: {error}");
+                                            if let Err(cancel_error) = args.SetCancel(true) {
+                                                eprintln!("could not cancel download without save prompt: {cancel_error}");
+                                            }
+                                            return Ok(());
+                                        }
+                                    };
+                                    let prompt_id = match runtime.register_prompt(
+                                        info.clone(),
+                                        event_page_label.clone(),
+                                        (!is_private).then_some(path_key),
+                                    ) {
+                                        Ok(prompt_id) => prompt_id,
+                                        Err(error) => {
+                                            eprintln!("could not retain download save request: {error}");
+                                            if let Err(cancel_error) = args.SetCancel(true) {
+                                                eprintln!("could not cancel download without save prompt: {cancel_error}");
+                                            }
+                                            if let Err(complete_error) = deferral.Complete() {
+                                                eprintln!("could not complete download save request after retaining it failed: {complete_error}");
+                                            }
+                                            return Ok(());
+                                        }
+                                    };
+                                    retain_download_save_prompt(
+                                        prompt_id.clone(),
+                                        &args,
+                                        &deferral,
+                                    );
+                                    let event = DownloadSavePromptEvent {
+                                        prompt_id: prompt_id.clone(),
+                                        url: info.url,
+                                        suggested_path: info.suggested_path,
+                                    };
+                                    if let Err(error) = app_for_download.emit_to(
+                                        &event_window_label,
+                                        "browser:download-save-prompt",
+                                        event,
+                                    ) {
+                                        eprintln!("could not request a download destination: {error}");
+                                        if let Err(cancel_error) =
+                                            resolve_download_prompt_on_current_thread(
+                                                &runtime,
+                                                &prompt_id,
+                                                None,
+                                            )
+                                        {
+                                            eprintln!(
+                                                "could not cancel download after save prompt failed: {cancel_error}"
+                                            );
+                                        }
+                                    }
+                                }
+                                Ok(())
+                            },
+                        ));
+                        let mut token = 0;
+                        core_4
+                            .add_DownloadStarting(&handler, &mut token)
+                            .map_err(|error| {
+                                format!("could not register WebView2 download handler: {error}")
+                            })?;
+                    }
+                    Ok(())
+                })();
+                if result_sender.send(result).is_err() {
+                    eprintln!("could not return WebView2 download tracking setup result");
+                }
+            })
+            .map_err(|error| format!("could not access native webview: {error}"))?;
+        result_receiver.recv().map_err(|error| {
+            format!("could not receive WebView2 download tracking setup result: {error}")
+        })?
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (app, is_private);
+        Ok(())
+    }
+}
+
+#[tauri::command]
+pub async fn resolve_download_save_path(
+    app: AppHandle,
+    prompt_id: String,
+    path: Option<String>,
+    storage: State<'_, StorageService>,
+    runtime: State<'_, DownloadRuntime>,
+) -> Result<(), String> {
+    let prompt = runtime.prompt_info(&prompt_id)?;
+    if let Some(path) = path.as_deref() {
+        if path.len() > 4096 || !Path::new(path).is_absolute() {
+            resolve_download_prompt(&app, &runtime, &prompt_id, None)?;
+            return Err("The selected download location is invalid.".to_string());
+        }
+        if !prompt.is_private {
+            let url = prompt.url.clone();
+            let target_path = path.to_string();
+            if let Err(error) = storage
+                .with_connection(move |connection| {
+                    record_download_start(connection, &url, &target_path, unix_timestamp())
+                })
+                .await
+            {
+                if let Err(cancel_error) = resolve_download_prompt(&app, &runtime, &prompt_id, None)
+                {
+                    eprintln!(
+                        "could not cancel download after saving its record failed: {cancel_error}"
+                    );
+                }
+                return Err(error);
+            }
+        }
+    }
+
+    resolve_download_prompt(&app, &runtime, &prompt_id, path.clone())?;
+    if path.is_some() && !prompt.is_private {
+        emit_download_changed(&app);
+    }
+    Ok(())
+}
+
+fn remove_cancelled_download_file(path: &Path) -> Result<(), String> {
+    for attempt in 0..5 {
+        match std::fs::remove_file(path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if attempt < 4 && error.kind() == std::io::ErrorKind::PermissionDenied => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "could not delete canceled download file {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn delete_cancelled_download_file(path: String) {
+    tauri::async_runtime::spawn(async move {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            remove_cancelled_download_file(Path::new(&path))
+        })
+        .await;
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => eprintln!("{error}"),
+            Err(error) => eprintln!("canceled-download cleanup worker failed: {error}"),
+        }
+    });
+}
+
+#[cfg(windows)]
+fn attach_download_operation_handlers(
+    app: AppHandle,
+    runtime: DownloadRuntime,
+    operation: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2DownloadOperation,
+    operation_id: String,
+    path_key: Arc<Mutex<String>>,
+) -> Result<(), String> {
+    use webview2_com::{
+        BytesReceivedChangedEventHandler,
+        Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
+        },
+        StateChangedEventHandler,
+    };
+
+    unsafe {
+        let bytes_app = app.clone();
+        let bytes_runtime = runtime.clone();
+        let bytes_path_key = path_key.clone();
+        let bytes_handler = BytesReceivedChangedEventHandler::create(Box::new(move |sender, _| {
+            let Some(operation) = sender else {
+                return Ok(());
+            };
+            let path = match bytes_path_key.lock() {
+                Ok(path) => path.clone(),
+                Err(_) => {
+                    eprintln!("download path state lock is poisoned");
+                    return Ok(());
+                }
+            };
+            let mut bytes_received = 0;
+            let mut total_bytes = 0;
+            operation.BytesReceived(&mut bytes_received)?;
+            operation.TotalBytesToReceive(&mut total_bytes)?;
+            match bytes_runtime.update_progress(
+                &path,
+                bytes_received.max(0) as u64,
+                (total_bytes > 0).then_some(total_bytes as u64),
+            ) {
+                Ok(Some(progress)) => {
+                    if let Err(error) = bytes_app.emit("browser:download-progress", progress) {
+                        eprintln!("could not notify browser chrome of download progress: {error}");
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => eprintln!("could not update download progress: {error}"),
+            }
+            Ok(())
+        }));
+        let mut bytes_token = 0;
+        operation
+            .add_BytesReceivedChanged(&bytes_handler, &mut bytes_token)
+            .map_err(|error| format!("could not register download progress handler: {error}"))?;
+
+        let state_app = app;
+        let state_runtime = runtime;
+        let state_operation_id = operation_id;
+        let state_path_key = path_key;
+        let state_handler = StateChangedEventHandler::create(Box::new(move |sender, _| {
+            let Some(operation) = sender else {
+                return Ok(());
+            };
+            let mut state = Default::default();
+            operation.State(&mut state)?;
+            if state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS {
+                return Ok(());
+            }
+            let path = match state_path_key.lock() {
+                Ok(path) => path.clone(),
+                Err(_) => {
+                    eprintln!("download path state lock is poisoned");
+                    return Ok(());
+                }
+            };
+            let canceled_file = match state_runtime
+                .take_completion(&path, state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED)
+            {
+                Ok(path) => path,
+                Err(error) => {
+                    eprintln!("could not clear completed download state: {error}");
+                    None
+                }
+            };
+            release_download_operation(&state_operation_id);
+            if let Some(path) = canceled_file {
+                delete_cancelled_download_file(path);
+            }
+            let mut bytes_received = 0;
+            let mut total_bytes = 0;
+            operation.BytesReceived(&mut bytes_received)?;
+            operation.TotalBytesToReceive(&mut total_bytes)?;
+            let progress = DownloadProgress {
+                path,
+                bytes_received: bytes_received.max(0) as u64,
+                total_bytes: (total_bytes > 0).then_some(total_bytes as u64),
+                paused: false,
+            };
+            if let Err(error) = state_app.emit("browser:download-progress", progress) {
+                eprintln!("could not notify browser chrome of download completion: {error}");
+            }
+            if state != COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
+                if let Err(error) = state_app.emit("browser:downloads-updated", ()) {
+                    eprintln!("could not notify browser chrome of interrupted download: {error}");
+                }
+            }
+            Ok(())
+        }));
+        let mut state_token = 0;
+        operation
+            .add_StateChanged(&state_handler, &mut state_token)
+            .map_err(|error| format!("could not register download state handler: {error}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2338,6 +2954,14 @@ fn create_tab_blocking(
         }
         return Err(error);
     }
+    if let Err(error) = attach_download_tracking(&app, &view) {
+        if let Err(close_error) = view.close() {
+            eprintln!(
+                "could not close browser tab after download tracking setup failed: {close_error}"
+            );
+        }
+        return Err(error);
+    }
     match state.0.lock() {
         Ok(mut data) => {
             if let Some(previous_id) = previous_active.as_ref() {
@@ -3134,6 +3758,14 @@ fn restore_sleeping_tab_webview(
         }
         return Err(error);
     }
+    if let Err(error) = attach_download_tracking(&app, &view) {
+        if let Err(close_error) = view.close() {
+            eprintln!(
+                "could not close restored tab after download tracking setup failed: {close_error}"
+            );
+        }
+        return Err(error);
+    }
     if url.as_str() != "about:blank" {
         if let Err(error) = view.navigate(url) {
             if let Err(close_error) = view.close() {
@@ -3277,10 +3909,10 @@ fn emit_download_changed(app: &AppHandle) {
 mod tests {
     use super::{
         assign_tab_to_group, idle_tabs_past_timeout, is_page_webview_label,
-        parse_tab_sleep_timeout, remember_closed_tab, rollback_tab_metadata, update_tab_url,
-        validate_find_query, validate_group_details, validate_pdf_output_path,
-        validate_tab_sleep_timeout, BrowserData, BrowserState, TabGroup, TabInfo, TabSleepPolicy,
-        MAX_CLOSED_TABS,
+        parse_tab_sleep_timeout, remember_closed_tab, remove_cancelled_download_file,
+        rollback_tab_metadata, update_tab_url, validate_find_query, validate_group_details,
+        validate_pdf_output_path, validate_tab_sleep_timeout, BrowserData, BrowserState, TabGroup,
+        TabInfo, TabSleepPolicy, MAX_CLOSED_TABS,
     };
     use std::{
         collections::{HashMap, HashSet},
@@ -3295,6 +3927,23 @@ mod tests {
             group_id: None,
             sleeping: false,
         }
+    }
+
+    #[test]
+    fn canceled_download_cleanup_removes_the_partial_file() {
+        let path = std::env::temp_dir().join(format!(
+            "eefi-canceled-download-{}-{}.tmp",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"partial download").unwrap();
+
+        remove_cancelled_download_file(&path).unwrap();
+
+        assert!(!path.exists());
     }
 
     #[test]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-download-ask-where-to-save"
+description = "Enables the set_download_ask_where_to_save command without any pre-configured scope."
+commands.allow = ["set_download_ask_where_to_save"]
+
+[[permission]]
+identifier = "deny-set-download-ask-where-to-save"
+description = "Denies the set_download_ask_where_to_save command without any pre-configured scope."
+commands.deny = ["set_download_ask_where_to_save"]

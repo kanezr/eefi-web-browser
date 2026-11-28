@@ -21,6 +21,11 @@
     url: string;
     title?: string;
   };
+  type DownloadSavePrompt = {
+    promptId: string;
+    url: string;
+    suggestedPath: string;
+  };
   type FindResult = {
     tabId: string;
     query: string;
@@ -760,6 +765,7 @@
     let unlistenFindResult: (() => void) | undefined;
     let unlistenReopenClosedTab: (() => void) | undefined;
     let unlistenUrlChanged: (() => void) | undefined;
+    let unlistenDownloadSavePrompt: (() => void) | undefined;
     let unlistenOneko: (() => void) | undefined;
     let observer: ResizeObserver | undefined;
     let disposed = false;
@@ -810,6 +816,28 @@
             }
           },
         );
+        unlistenDownloadSavePrompt = await listen<DownloadSavePrompt>(
+          "browser:download-save-prompt",
+          async ({ payload }) => {
+            let path: string | null = null;
+            try {
+              path = await save({
+                title: "Save downloaded file",
+                defaultPath: payload.suggestedPath,
+              });
+            } catch (error) {
+              showError(error);
+            }
+            try {
+              await invoke("resolve_download_save_path", {
+                promptId: payload.promptId,
+                path,
+              });
+            } catch (error) {
+              showError(error);
+            }
+          },
+        );
         unlistenFindResult = await listen<FindResult>(
           "browser:find-result",
           ({ payload }) => {
@@ -844,11 +872,13 @@
           unlistenFindResult();
           unlistenReopenClosedTab();
           unlistenUrlChanged();
+          unlistenDownloadSavePrompt();
           unlistenOneko();
           return;
         }
         privateMode = await invoke<boolean>("browser_window_mode");
         await invoke<string>("download_directory");
+        await invoke<boolean>("download_ask_where_to_save");
         if (!privateMode) await invoke("downloads_recover");
         tabs = await invoke<Tab[]>("restore_session");
         tabGroups = await invoke<TabGroup[]>("tab_groups_list");
@@ -943,6 +973,7 @@
       unlistenFindResult?.();
       unlistenReopenClosedTab?.();
       unlistenUrlChanged?.();
+      unlistenDownloadSavePrompt?.();
       unlistenOneko?.();
       observer?.disconnect();
       window.removeEventListener("keydown", onKeydown);

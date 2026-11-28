@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-download-save-path"
+description = "Enables the resolve_download_save_path command without any pre-configured scope."
+commands.allow = ["resolve_download_save_path"]
+
+[[permission]]
+identifier = "deny-resolve-download-save-path"
+description = "Denies the resolve_download_save_path command without any pre-configured scope."
+commands.deny = ["resolve_download_save_path"]

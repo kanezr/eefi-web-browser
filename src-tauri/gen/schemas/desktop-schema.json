@@ -345,10 +345,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-page-print-dialog`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-reopen-closed-tab`\n- `allow-toggle-devtools`\n- `allow-print-page`\n- `allow-save-page-as-pdf`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`\n- `allow-updater-settings-get`\n- `allow-updater-settings-set`\n- `allow-updater-current-version`\n- `allow-updater-check`\n- `allow-updater-install`\n- `allow-oneko-settings-get`\n- `allow-oneko-settings-set`\n- `allow-oneko-toggle`\n- `allow-oneko-site-visibility-set`",
+          "description": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-page-print-dialog`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-reopen-closed-tab`\n- `allow-resolve-download-save-path`\n- `allow-toggle-devtools`\n- `allow-print-page`\n- `allow-save-page-as-pdf`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-progress`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-control`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-download-ask-where-to-save`\n- `allow-set-download-ask-where-to-save`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`\n- `allow-updater-settings-get`\n- `allow-updater-settings-set`\n- `allow-updater-current-version`\n- `allow-updater-check`\n- `allow-updater-install`\n- `allow-oneko-settings-get`\n- `allow-oneko-settings-set`\n- `allow-oneko-toggle`\n- `allow-oneko-site-visibility-set`",
           "type": "string",
           "const": "browser-ui",
-          "markdownDescription": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-page-print-dialog`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-reopen-closed-tab`\n- `allow-toggle-devtools`\n- `allow-print-page`\n- `allow-save-page-as-pdf`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`\n- `allow-updater-settings-get`\n- `allow-updater-settings-set`\n- `allow-updater-current-version`\n- `allow-updater-check`\n- `allow-updater-install`\n- `allow-oneko-settings-get`\n- `allow-oneko-settings-set`\n- `allow-oneko-toggle`\n- `allow-oneko-site-visibility-set`"
+          "markdownDescription": "Permissions required by the trusted browser chrome.\n#### This permission set includes:\n\n- `allow-list-tabs`\n- `allow-active-tab-id`\n- `allow-toggle-page-devtools`\n- `allow-open-page-print-dialog`\n- `allow-open-find-bar`\n- `allow-find-in-page`\n- `allow-reopen-closed-tab`\n- `allow-resolve-download-save-path`\n- `allow-toggle-devtools`\n- `allow-print-page`\n- `allow-save-page-as-pdf`\n- `allow-browser-window-mode`\n- `allow-open-browser-window`\n- `allow-open-private-window`\n- `allow-detach-tab-to-new-window`\n- `allow-restore-session`\n- `allow-set-page-content-visible`\n- `allow-create-tab`\n- `allow-close-tab`\n- `allow-activate-tab`\n- `allow-reorder-tabs`\n- `allow-tab-groups-list`\n- `allow-tab-group-create`\n- `allow-tab-group-update`\n- `allow-tab-group-assign`\n- `allow-tab-group-delete`\n- `allow-navigate`\n- `allow-go-back`\n- `allow-go-forward`\n- `allow-reload`\n- `allow-stop`\n- `allow-go-home`\n- `allow-resize-active-view`\n- `allow-tab-sleep-timeout-get`\n- `allow-tab-sleep-timeout-set`\n- `allow-adblock-status`\n- `allow-adblock-set-enabled`\n- `allow-adblock-set-site-allowed`\n- `allow-adblock-get-custom-filters`\n- `allow-adblock-set-custom-filters`\n- `allow-privacy-status`\n- `allow-privacy-site-permissions`\n- `allow-privacy-set-site-permission`\n- `allow-privacy-set-https-only`\n- `allow-privacy-set-block-third-party-cookies`\n- `allow-privacy-set-clear-cookies-on-exit`\n- `allow-privacy-clear-cookies-and-cache`\n- `allow-bookmarks-list`\n- `allow-bookmark-folders`\n- `allow-bookmark-create`\n- `allow-bookmark-update`\n- `allow-bookmark-delete`\n- `allow-bookmark-folder-create`\n- `allow-bookmark-folder-delete`\n- `allow-bookmark-is-saved`\n- `allow-bookmark-import`\n- `allow-history-list`\n- `allow-history-clear-before`\n- `allow-history-delete-site`\n- `allow-history-clear`\n- `allow-downloads-list`\n- `allow-downloads-progress`\n- `allow-downloads-clear`\n- `allow-downloads-recover`\n- `allow-download-control`\n- `allow-download-open`\n- `allow-download-reveal`\n- `allow-download-directory`\n- `allow-set-download-directory`\n- `allow-download-ask-where-to-save`\n- `allow-set-download-ask-where-to-save`\n- `allow-passwords-list`\n- `allow-passwords-save`\n- `allow-passwords-reveal`\n- `allow-passwords-delete`\n- `allow-user-scripts-list`\n- `allow-user-scripts-save`\n- `allow-user-scripts-set-enabled`\n- `allow-user-scripts-delete`\n- `allow-updater-settings-get`\n- `allow-updater-settings-set`\n- `allow-updater-current-version`\n- `allow-updater-check`\n- `allow-updater-install`\n- `allow-oneko-settings-get`\n- `allow-oneko-settings-set`\n- `allow-oneko-toggle`\n- `allow-oneko-site-visibility-set`"
         },
         {
           "description": "Enables the activate_tab command without any pre-configured scope.",
@@ -471,6 +471,18 @@
           "markdownDescription": "Enables the detach_tab_to_new_window command without any pre-configured scope."
         },
         {
+          "description": "Enables the download_ask_where_to_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-download-ask-where-to-save",
+          "markdownDescription": "Enables the download_ask_where_to_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the download_control command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-download-control",
+          "markdownDescription": "Enables the download_control command without any pre-configured scope."
+        },
+        {
           "description": "Enables the download_directory command without any pre-configured scope.",
           "type": "string",
           "const": "allow-download-directory",
@@ -499,6 +511,12 @@
           "type": "string",
           "const": "allow-downloads-list",
           "markdownDescription": "Enables the downloads_list command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the downloads_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-downloads-progress",
+          "markdownDescription": "Enables the downloads_progress command without any pre-configured scope."
         },
         {
           "description": "Enables the downloads_recover command without any pre-configured scope.",
@@ -717,6 +735,12 @@
           "markdownDescription": "Enables the resize_active_view command without any pre-configured scope."
         },
         {
+          "description": "Enables the resolve_download_save_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-resolve-download-save-path",
+          "markdownDescription": "Enables the resolve_download_save_path command without any pre-configured scope."
+        },
+        {
           "description": "Enables the restore_session command without any pre-configured scope.",
           "type": "string",
           "const": "allow-restore-session",
@@ -727,6 +751,12 @@
           "type": "string",
           "const": "allow-save-page-as-pdf",
           "markdownDescription": "Enables the save_page_as_pdf command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_download_ask_where_to_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-download-ask-where-to-save",
+          "markdownDescription": "Enables the set_download_ask_where_to_save command without any pre-configured scope."
         },
         {
           "description": "Enables the set_download_directory command without any pre-configured scope.",
@@ -975,6 +1005,18 @@
           "markdownDescription": "Denies the detach_tab_to_new_window command without any pre-configured scope."
         },
         {
+          "description": "Denies the download_ask_where_to_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-download-ask-where-to-save",
+          "markdownDescription": "Denies the download_ask_where_to_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the download_control command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-download-control",
+          "markdownDescription": "Denies the download_control command without any pre-configured scope."
+        },
+        {
           "description": "Denies the download_directory command without any pre-configured scope.",
           "type": "string",
           "const": "deny-download-directory",
@@ -1003,6 +1045,12 @@
           "type": "string",
           "const": "deny-downloads-list",
           "markdownDescription": "Denies the downloads_list command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the downloads_progress command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-downloads-progress",
+          "markdownDescription": "Denies the downloads_progress command without any pre-configured scope."
         },
         {
           "description": "Denies the downloads_recover command without any pre-configured scope.",
@@ -1221,6 +1269,12 @@
           "markdownDescription": "Denies the resize_active_view command without any pre-configured scope."
         },
         {
+          "description": "Denies the resolve_download_save_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-resolve-download-save-path",
+          "markdownDescription": "Denies the resolve_download_save_path command without any pre-configured scope."
+        },
+        {
           "description": "Denies the restore_session command without any pre-configured scope.",
           "type": "string",
           "const": "deny-restore-session",
@@ -1231,6 +1285,12 @@
           "type": "string",
           "const": "deny-save-page-as-pdf",
           "markdownDescription": "Denies the save_page_as_pdf command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_download_ask_where_to_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-download-ask-where-to-save",
+          "markdownDescription": "Denies the set_download_ask_where_to_save command without any pre-configured scope."
         },
         {
           "description": "Denies the set_download_directory command without any pre-configured scope.",
