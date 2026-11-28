@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 
-use super::{Bookmark, BookmarkFolder};
+use super::{Bookmark, BookmarkFolder, OmniboxSuggestion};
 
 pub fn list_bookmarks(
     connection: &Connection,
@@ -32,6 +32,31 @@ pub fn list_bookmarks(
                 folder_name: row.get(4)?,
                 on_bar: row.get::<_, i64>(5)? != 0,
                 created_at: row.get(6)?,
+            })
+        })
+        .map_err(db_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+}
+
+pub fn suggest_bookmarks(
+    connection: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<OmniboxSuggestion>, String> {
+    let query = format!("%{}%", escape_like(query.trim()));
+    let mut statement = connection
+        .prepare(
+            "SELECT title, url FROM bookmarks
+             WHERE title LIKE ?1 ESCAPE '\\' OR url LIKE ?1 ESCAPE '\\'
+             ORDER BY on_bar DESC, title COLLATE NOCASE, id DESC
+             LIMIT ?2",
+        )
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map(params![query, limit.clamp(1, 8) as i64], |row| {
+            Ok(OmniboxSuggestion {
+                title: row.get(0)?,
+                url: row.get(1)?,
             })
         })
         .map_err(db_error)?;

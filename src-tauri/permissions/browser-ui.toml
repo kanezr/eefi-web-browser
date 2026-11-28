@@ -60,6 +60,7 @@ permissions = [
   "allow-bookmark-is-saved",
   "allow-bookmark-import",
   "allow-history-list",
+  "allow-omnibox-suggestions",
   "allow-history-clear-before",
   "allow-history-delete-site",
   "allow-history-clear",

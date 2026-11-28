@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-omnibox-suggestions"
+description = "Enables the omnibox_suggestions command without any pre-configured scope."
+commands.allow = ["omnibox_suggestions"]
+
+[[permission]]
+identifier = "deny-omnibox-suggestions"
+description = "Denies the omnibox_suggestions command without any pre-configured scope."
+commands.deny = ["omnibox_suggestions"]

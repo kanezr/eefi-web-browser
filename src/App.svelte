@@ -81,6 +81,11 @@
   let addressInput: HTMLInputElement;
   let findInput = $state<HTMLInputElement>();
   let contentArea: HTMLDivElement;
+  let resizeFrame: number | undefined;
+  let resizeInFlight = false;
+  let resizePending = false;
+  let lastResizedTabId = "";
+  let lastContentBounds: { x: number; y: number; width: number; height: number } | undefined;
   let dragTabId = "";
   let isLoading = $state(false);
   let message = $state("");
@@ -335,30 +340,17 @@
   function updateSuggestions() {
     if (suggestionTimer !== undefined) window.clearTimeout(suggestionTimer);
     const query = address.trim();
+    const queryLength = Array.from(query).length;
     const request = ++suggestionRequest;
-    if (query.length < 2) {
+    if (queryLength < 2 || queryLength > 256) {
       suggestions = [];
       return;
     }
     suggestionTimer = window.setTimeout(async () => {
       try {
-        const [visited, saved] = await Promise.all([
-          invoke<Array<{ title: string; url: string }>>("history_list", {
-            query,
-            limit: 6,
-          }),
-          invoke<Bookmark[]>("bookmarks_list", {
-            query,
-            barOnly: false,
-            folderId: null,
-          }),
-        ]);
+        const results = await invoke<Suggestion[]>("omnibox_suggestions", { query });
         if (request !== suggestionRequest) return;
-        const unique = new Map<string, Suggestion>();
-        for (const entry of [...saved, ...visited]) {
-          if (!unique.has(entry.url)) unique.set(entry.url, { title: entry.title, url: entry.url });
-        }
-        suggestions = [...unique.values()].slice(0, 8);
+        suggestions = results;
       } catch (error) {
         if (request === suggestionRequest) showError(error);
       }
@@ -581,7 +573,7 @@
     requestAnimationFrame(() => {
       findInput?.focus();
       findInput?.select();
-      void resizeContent();
+      scheduleResizeContent();
       if (findQuery) void findInPage(0);
     });
   }
@@ -605,7 +597,7 @@
         restorePageFocus: true,
       }).catch(showError);
     }
-    requestAnimationFrame(() => void resizeContent());
+    scheduleResizeContent();
   }
 
   function scheduleFind() {
@@ -698,18 +690,51 @@
 
   async function resizeContent() {
     if (!contentArea) return;
-    const rect = contentArea.getBoundingClientRect();
-    try {
-      await invoke("resize_active_view", {
-        x: rect.x,
-        y: rect.y,
-        width: rect.width,
-        height: rect.height,
-      });
-    } catch (error) {
-      // The view can briefly be absent while the last tab is closing.
-      if (activeTabId) showError(error);
+    if (resizeInFlight) {
+      resizePending = true;
+      return;
     }
+    resizeInFlight = true;
+    try {
+      do {
+        resizePending = false;
+        const rect = contentArea.getBoundingClientRect();
+        const bounds = {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        };
+        if (
+          lastContentBounds &&
+          lastResizedTabId === activeTabId &&
+          lastContentBounds.x === bounds.x &&
+          lastContentBounds.y === bounds.y &&
+          lastContentBounds.width === bounds.width &&
+          lastContentBounds.height === bounds.height
+        ) {
+          continue;
+        }
+        try {
+          await invoke("resize_active_view", bounds);
+          lastContentBounds = bounds;
+          lastResizedTabId = activeTabId;
+        } catch (error) {
+          // The view can briefly be absent while the last tab is closing.
+          if (activeTabId) showError(error);
+        }
+      } while (resizePending);
+    } finally {
+      resizeInFlight = false;
+    }
+  }
+
+  function scheduleResizeContent() {
+    if (resizeFrame !== undefined) return;
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = undefined;
+      void resizeContent();
+    });
   }
 
   function focusAddress() {
@@ -810,6 +835,10 @@
             tabs = tabs.map((tab) =>
               tab.id === payload.tabId ? { ...tab, sleeping: payload.sleeping } : tab,
             );
+            if (!payload.sleeping && payload.tabId === activeTabId) {
+              lastResizedTabId = "";
+              scheduleResizeContent();
+            }
           },
         );
         unlistenFindOpen = await listen("browser:find-open", () => openFind());
@@ -891,26 +920,38 @@
           unlistenOneko();
           return;
         }
-        privateMode = await invoke<boolean>("browser_window_mode");
-        await invoke<string>("download_directory");
-        await invoke<boolean>("download_ask_where_to_save");
-        if (!privateMode) await invoke("downloads_recover");
-        tabs = await invoke<Tab[]>("restore_session");
-        tabGroups = await invoke<TabGroup[]>("tab_groups_list");
-        activeTabId = await invoke<string | null>("active_tab_id") ?? tabs[0]?.id ?? "";
+        const [windowMode] = await Promise.all([
+          invoke<boolean>("browser_window_mode"),
+          invoke<string>("download_directory"),
+          invoke<boolean>("download_ask_where_to_save"),
+        ]);
+        privateMode = windowMode;
+        const [restoredTabs] = await Promise.all([
+          invoke<Tab[]>("restore_session"),
+          privateMode ? Promise.resolve() : invoke("downloads_recover"),
+        ]);
+        tabs = restoredTabs;
+        const [groups, restoredActiveTabId] = await Promise.all([
+          invoke<TabGroup[]>("tab_groups_list"),
+          invoke<string | null>("active_tab_id"),
+        ]);
+        tabGroups = groups;
+        activeTabId = restoredActiveTabId ?? tabs[0]?.id ?? "";
         if (activeTab?.url === "about:blank") {
           homeTabIds = [activeTab.id];
           await invoke("set_page_content_visible", { visible: false });
         }
         address = homeTabIds.includes(activeTabId) ? "" : activeTab?.url ?? "";
-        await refreshAdblockStatus(address);
-        await refreshOnekoSettings(address);
-        await refreshBookmarkBar();
-        await refreshBookmarkStatus();
+        await Promise.all([
+          refreshAdblockStatus(address),
+          refreshOnekoSettings(address),
+          refreshBookmarkBar(),
+          refreshBookmarkStatus(),
+        ]);
         await resizeContent();
         focusAddress();
         window.setTimeout(() => void checkForUpdatesAtStartup(), 1500);
-        observer = new ResizeObserver(() => void resizeContent());
+        observer = new ResizeObserver(scheduleResizeContent);
         if (contentArea) observer.observe(contentArea);
       } catch (error) {
         showError(error);
@@ -993,6 +1034,7 @@
       observer?.disconnect();
       window.removeEventListener("keydown", onKeydown);
       if (findTimer !== undefined) window.clearTimeout(findTimer);
+      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
     };
   });
 </script>

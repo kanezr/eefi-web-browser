@@ -31,6 +31,13 @@ pub struct HistoryEntry {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OmniboxSuggestion {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DownloadEntry {
     pub id: i64,
     pub url: String,

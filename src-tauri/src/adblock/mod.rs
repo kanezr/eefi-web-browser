@@ -1,8 +1,9 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_map::DefaultHasher, HashMap, HashSet},
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock, RwLock,
     },
     time::{Duration, SystemTime},
@@ -65,7 +66,20 @@ const MAX_COSMETIC_WEBVIEW_TOKENS: usize = 8192;
 const MAX_PROCEDURAL_COSMETIC_RULES: usize = 128;
 const MAX_PROCEDURAL_COSMETIC_SELECTOR_LENGTH: usize = 512;
 const MAX_PROCEDURAL_COSMETIC_TEXT_LENGTH: usize = 256;
+const BLOCKED_COUNT_SHARDS: usize = 16;
 static SCRIPTLET_RESOURCES: OnceLock<Vec<Resource>> = OnceLock::new();
+
+fn new_blocked_counts() -> Vec<Mutex<HashMap<String, Arc<AtomicU64>>>> {
+    (0..BLOCKED_COUNT_SHARDS)
+        .map(|_| Mutex::new(HashMap::new()))
+        .collect()
+}
+
+fn blocked_count_shard(host: &str) -> usize {
+    let mut hasher = DefaultHasher::new();
+    host.hash(&mut hasher);
+    hasher.finish() as usize % BLOCKED_COUNT_SHARDS
+}
 
 const SHADOW_DOM_BOOTSTRAP: &str = r#"
 (()=>{
@@ -307,7 +321,7 @@ struct AdblockInner {
     engine: RwLock<Engine>,
     enabled: AtomicBool,
     allowed_sites: RwLock<std::collections::HashSet<String>>,
-    blocked_counts: Mutex<HashMap<String, u64>>,
+    blocked_counts: Vec<Mutex<HashMap<String, Arc<AtomicU64>>>>,
     malicious_domains: RwLock<HashSet<String>>,
     custom_filter_config: RwLock<CustomFilterConfig>,
     filter_cache_directory: RwLock<Option<PathBuf>>,
@@ -369,7 +383,7 @@ impl AdblockService {
             engine: RwLock::new(build_engine(BUILTIN_FILTERS)),
             enabled: AtomicBool::new(true),
             allowed_sites: RwLock::new(std::collections::HashSet::new()),
-            blocked_counts: Mutex::new(HashMap::new()),
+            blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
             filter_cache_directory: RwLock::new(None),
@@ -427,13 +441,19 @@ impl AdblockService {
             .should_block();
 
         if blocked && !source_host.is_empty() {
-            let mut counts = self
-                .0
-                .blocked_counts
-                .lock()
-                .map_err(|_| "ad blocker counter lock is poisoned".to_string())?;
-            let count = counts.entry(source_host).or_default();
-            *count = count.saturating_add(1);
+            let counter = {
+                let mut counts = self.0.blocked_counts[blocked_count_shard(&source_host)]
+                    .lock()
+                    .map_err(|_| "ad blocker counter lock is poisoned".to_string())?;
+                Arc::clone(
+                    counts
+                        .entry(source_host)
+                        .or_insert_with(|| Arc::new(AtomicU64::new(0))),
+                )
+            };
+            let _ = counter.try_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                Some(count.saturating_add(1))
+            });
         }
         Ok(blocked)
     }
@@ -454,13 +474,11 @@ impl AdblockService {
             None => false,
         };
         let blocked_count = match &host {
-            Some(host) => self
-                .0
-                .blocked_counts
+            Some(host) => self.0.blocked_counts[blocked_count_shard(host)]
                 .lock()
                 .map_err(|_| "ad blocker counter lock is poisoned".to_string())?
                 .get(host)
-                .copied()
+                .map(|count| count.load(Ordering::Relaxed))
                 .unwrap_or_default(),
             None => 0,
         };
@@ -2459,7 +2477,7 @@ mod tests {
             )),
             enabled: AtomicBool::new(true),
             allowed_sites: RwLock::new(std::collections::HashSet::new()),
-            blocked_counts: Mutex::new(HashMap::new()),
+            blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
             filter_cache_directory: RwLock::new(None),
@@ -2502,6 +2520,40 @@ mod tests {
                 "GET",
             )
             .expect("check request-type specificity"));
+        assert_eq!(
+            service
+                .status("news.example.test")
+                .expect("read blocked request count")
+                .blocked_count,
+            2
+        );
+        let workers = (0..4)
+            .map(|_| {
+                let service = service.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..25 {
+                        assert!(service
+                            .should_block(
+                                "https://ads.example.test/banner.js",
+                                "https://news.example.test/",
+                                "script",
+                                "GET",
+                            )
+                            .expect("check concurrent request"));
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().expect("blocked request worker");
+        }
+        assert_eq!(
+            service
+                .status("news.example.test")
+                .expect("read concurrent blocked request count")
+                .blocked_count,
+            102
+        );
     }
 
     #[test]
@@ -2539,7 +2591,7 @@ mod tests {
             )),
             enabled: AtomicBool::new(true),
             allowed_sites: RwLock::new(HashSet::new()),
-            blocked_counts: Mutex::new(HashMap::new()),
+            blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
             filter_cache_directory: RwLock::new(None),
@@ -2587,7 +2639,7 @@ mod tests {
             engine: RwLock::new(engine),
             enabled: AtomicBool::new(true),
             allowed_sites: RwLock::new(HashSet::new()),
-            blocked_counts: Mutex::new(HashMap::new()),
+            blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
             filter_cache_directory: RwLock::new(None),
@@ -2656,7 +2708,7 @@ mod tests {
             )),
             enabled: AtomicBool::new(true),
             allowed_sites: RwLock::new(std::collections::HashSet::new()),
-            blocked_counts: Mutex::new(HashMap::new()),
+            blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
             filter_cache_directory: RwLock::new(None),
@@ -2740,7 +2792,7 @@ mod tests {
             engine: RwLock::new(build_engine("||ads.example.test^")),
             enabled: AtomicBool::new(true),
             allowed_sites: RwLock::new(std::collections::HashSet::new()),
-            blocked_counts: Mutex::new(HashMap::new()),
+            blocked_counts: new_blocked_counts(),
             malicious_domains: RwLock::new(HashSet::new()),
             custom_filter_config: RwLock::new(CustomFilterConfig::default()),
             filter_cache_directory: RwLock::new(None),

@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use url::Url;
 
-use super::HistoryEntry;
+use super::{HistoryEntry, OmniboxSuggestion};
 
 pub fn record_history(
     connection: &Connection,
@@ -56,6 +56,53 @@ pub fn list_history(
                 url: row.get(1)?,
                 title: row.get(2)?,
                 visited_at: row.get(3)?,
+            })
+        })
+        .map_err(db_error)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(db_error)
+}
+
+pub fn suggest_history(
+    connection: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<OmniboxSuggestion>, String> {
+    let query = query.trim();
+    let limit = limit.clamp(1, 8) as i64;
+    if query.chars().count() < 3 {
+        let query = format!("%{}%", escape_like(query));
+        let mut statement = connection
+            .prepare(
+                "SELECT url, title FROM history
+                 WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
+                 ORDER BY visited_at DESC, id DESC LIMIT ?2",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map(params![query, limit], |row| {
+                Ok(OmniboxSuggestion {
+                    url: row.get(0)?,
+                    title: row.get(1)?,
+                })
+            })
+            .map_err(db_error)?;
+        return rows.collect::<Result<Vec<_>, _>>().map_err(db_error);
+    }
+
+    let match_query = format!("\"{}\"", query.replace('"', "\"\""));
+    let mut statement = connection
+        .prepare(
+            "SELECT h.url, h.title FROM history_search
+             JOIN history h ON h.id = history_search.rowid
+             WHERE history_search MATCH ?1
+             ORDER BY h.visited_at DESC, h.id DESC LIMIT ?2",
+        )
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map(params![match_query, limit], |row| {
+            Ok(OmniboxSuggestion {
+                url: row.get(0)?,
+                title: row.get(1)?,
             })
         })
         .map_err(db_error)?;

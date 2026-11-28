@@ -164,6 +164,7 @@ pub fn run() {
             storage::bookmark_is_saved,
             storage::bookmark_import,
             storage::history_list,
+            storage::omnibox_suggestions,
             storage::history_clear_before,
             storage::history_delete_site,
             storage::history_clear,

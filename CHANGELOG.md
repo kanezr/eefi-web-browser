@@ -13,7 +13,16 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 - Added live download byte progress with pause, resume, and cancel controls.
 - Added a persistent **Ask where to save each file** preference. Choosing a
   location opens the Windows save dialog before the download starts.
-  
+
+### Changed
+
+- Reuse the profile's SQLite connection and add indexed substring search for
+  omnibox history suggestions; cap bookmark suggestions and combine them into
+  one request.
+- Parallelize independent browser startup reads and coalesce redundant page
+  webview resize updates.
+- Reduce lock hold time when recording blocked-request counts.
+
 ### Fixed
 
 - Keep active downloads in the list when clearing completed download records.

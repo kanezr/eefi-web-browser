@@ -25,12 +25,14 @@ static MIGRATION_LOCK: Mutex<()> = Mutex::new(());
 #[derive(Clone)]
 pub struct StorageService {
     path: Arc<PathBuf>,
+    connection: Arc<Mutex<Option<Connection>>>,
 }
 
 impl StorageService {
     pub fn new(path: PathBuf) -> Self {
         Self {
             path: Arc::new(path),
+            connection: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -40,9 +42,18 @@ impl StorageService {
         F: FnOnce(&Connection) -> Result<T, String> + Send + 'static,
     {
         let path = self.path.clone();
+        let connection = self.connection.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            let connection = open_connection(&path)?;
-            operation(&connection)
+            let mut connection = connection
+                .lock()
+                .map_err(|_| "database connection lock is poisoned".to_string())?;
+            if connection.is_none() {
+                *connection = Some(open_connection(&path)?);
+            }
+            let connection = connection
+                .as_ref()
+                .ok_or_else(|| "database connection was not initialized".to_string())?;
+            operation(connection)
         })
         .await
         .map_err(|error| format!("storage worker failed: {error}"))?
@@ -238,6 +249,70 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             .pragma_update(None, "user_version", 6)
             .map_err(|error| format!("could not restore compatible database version: {error}"))?;
     }
+    ensure_history_search(connection)?;
+    Ok(())
+}
+
+fn ensure_history_search(connection: &Connection) -> Result<(), String> {
+    let history_exists: bool = connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'history'
+            )",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("could not inspect history table: {error}"))?;
+    if !history_exists {
+        return Ok(());
+    }
+
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS browser_features (
+                name TEXT PRIMARY KEY
+            );",
+        )
+        .map_err(|error| format!("could not create database feature registry: {error}"))?;
+    let installed: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM browser_features WHERE name = 'history_trigram_search')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("could not inspect database search features: {error}"))?;
+    if installed {
+        return Ok(());
+    }
+
+    connection
+        .execute_batch(
+            "BEGIN IMMEDIATE;
+            CREATE VIRTUAL TABLE history_search USING fts5(
+                title, url,
+                content='history',
+                content_rowid='id',
+                tokenize='trigram'
+            );
+            CREATE TRIGGER history_search_insert AFTER INSERT ON history BEGIN
+                INSERT INTO history_search(rowid, title, url)
+                VALUES (new.id, new.title, new.url);
+            END;
+            CREATE TRIGGER history_search_delete AFTER DELETE ON history BEGIN
+                INSERT INTO history_search(history_search, rowid, title, url)
+                VALUES ('delete', old.id, old.title, old.url);
+            END;
+            CREATE TRIGGER history_search_update AFTER UPDATE ON history BEGIN
+                INSERT INTO history_search(history_search, rowid, title, url)
+                VALUES ('delete', old.id, old.title, old.url);
+                INSERT INTO history_search(rowid, title, url)
+                VALUES (new.id, new.title, new.url);
+            END;
+            INSERT INTO history_search(history_search) VALUES ('rebuild');
+            INSERT INTO browser_features(name) VALUES ('history_trigram_search');
+            COMMIT;",
+        )
+        .map_err(|error| format!("could not initialize history search index: {error}"))?;
     Ok(())
 }
 
@@ -277,6 +352,41 @@ mod tests {
         assert_eq!(bookmarks[0].id, bookmark_id);
         assert_eq!(bookmarks[0].folder_name.as_deref(), Some("Research"));
         assert!(bookmarks[0].on_bar);
+    }
+
+    #[test]
+    fn history_suggestions_use_trigram_index_and_track_history_changes() {
+        let (_directory, connection) = test_connection();
+        record_history(
+            &connection,
+            "https://example.com/articles/performance",
+            "Browser performance guide",
+            1_700_000_000,
+        )
+        .expect("record history entry");
+
+        let suggestions =
+            suggest_history(&connection, "formance gu", 8).expect("search within title");
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].title, "Browser performance guide");
+
+        update_latest_title(
+            &connection,
+            "https://example.com/articles/performance",
+            "Updated performance guide",
+        )
+        .expect("update history title");
+        assert_eq!(
+            suggest_history(&connection, "Updated performance", 8).expect("search updated title")
+                [0]
+            .title,
+            "Updated performance guide"
+        );
+
+        clear_history(&connection).expect("clear history");
+        assert!(suggest_history(&connection, "performance", 8)
+            .expect("search cleared history")
+            .is_empty());
     }
 
     #[test]

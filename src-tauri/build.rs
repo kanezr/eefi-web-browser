@@ -63,6 +63,7 @@ const APP_COMMANDS: &[&str] = &[
     "bookmark_is_saved",
     "bookmark_import",
     "history_list",
+    "omnibox_suggestions",
     "history_clear_before",
     "history_delete_site",
     "history_clear",
