@@ -1,6 +1,6 @@
 [package]
 name = "eefi-browser"
-version = "0.1.3-beta"
+version = "0.1.3"
 description = "A lightweight desktop browser built with Tauri and WebView2"
 authors = ["Eefi Browser"]
 edition = "2021"
