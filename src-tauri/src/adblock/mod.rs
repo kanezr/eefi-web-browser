@@ -31,7 +31,26 @@ const BUILTIN_FILTERS: &str = "\
 ||googlesyndication.com^\n\
 ||google-analytics.com^\n\
 ||adservice.google.com^\n\
-||ads-twitter.com^\n";
+||ads-twitter.com^\n\
+||youtube.com/pagead/\n\
+||youtube.com/api/stats/ads\n\
+||googlevideo.com/initplayback?source=youtube&*c=TVHTML5&*oad=$xmlhttprequest,domain=youtube.com\n\
+*_ad_$media,domain=youtube.com,third-party\n\
+||ads.twitch.tv^\n\
+||twitch.tv/ads/$script,xmlhttprequest,image\n\
+youtube.com##.video-ads\n\
+youtube.com##.ytp-ad-module\n\
+youtube.com##.ytp-ad-player-overlay\n\
+youtube.com##.ytp-ad-overlay-container\n\
+youtube.com##.ytp-ad-text-overlay\n\
+youtube.com##.ytp-ad-preview-container\n\
+youtube.com##.ytp-ad-skip-button\n\
+youtube.com##+js(set, ytInitialPlayerResponse.playerAds, undefined)\n\
+youtube.com##+js(set, ytInitialPlayerResponse.adPlacements, undefined)\n\
+youtube.com##+js(set, ytInitialPlayerResponse.adSlots, undefined)\n\
+youtube.com##+js(set, playerResponse.adPlacements, undefined)\n\
+youtube.com##+js(json-prune, playerResponse.adPlacements playerResponse.playerAds playerResponse.adSlots adPlacements playerAds adSlots important)\n";
+const BUILTIN_FILTERS_CACHE_FILE: &str = "builtin-filters.txt";
 const MALWARE_FILTER_LIST: (&str, &str) = (
     "urlhaus-domains.txt",
     "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-domains.txt",
@@ -1362,6 +1381,10 @@ fn compiled_engine_is_current(directory: &Path, config: &CustomFilterConfig) -> 
         Some(persisted) if &persisted == config => {}
         _ => return false,
     }
+    match std::fs::read_to_string(directory.join(BUILTIN_FILTERS_CACHE_FILE)) {
+        Ok(cached) if cached == BUILTIN_FILTERS => {}
+        _ => return false,
+    }
     for (filename, _) in FILTER_LISTS {
         let list = match std::fs::metadata(directory.join(filename))
             .and_then(|metadata| metadata.modified())
@@ -1528,7 +1551,12 @@ fn persist_engine(directory: &Path, engine: &Engine) -> Result<(), String> {
     std::fs::create_dir_all(directory)
         .map_err(|error| format!("could not create ad blocker cache directory: {error}"))?;
     std::fs::write(directory.join("engine.bin"), engine.serialize())
-        .map_err(|error| format!("could not save compiled ad blocker engine: {error}"))
+        .map_err(|error| format!("could not save compiled ad blocker engine: {error}"))?;
+    std::fs::write(
+        directory.join(BUILTIN_FILTERS_CACHE_FILE),
+        BUILTIN_FILTERS.as_bytes(),
+    )
+    .map_err(|error| format!("could not save built-in ad blocker rules: {error}"))
 }
 
 fn filter_cache_is_stale(directory: &Path) -> Result<bool, String> {
@@ -2557,6 +2585,90 @@ mod tests {
     }
 
     #[test]
+    fn blocks_known_streaming_ad_requests_without_blocking_video_playback() {
+        let service = AdblockService::new();
+        let blocked_requests = [
+            (
+                "https://www.youtube.com/pagead/interaction/",
+                "https://www.youtube.com/watch?v=video123",
+                "other",
+            ),
+            (
+                "https://r1.googlevideo.com/initplayback?source=youtube&c=TVHTML5&oad=1",
+                "https://www.youtube.com/watch?v=video123",
+                "xmlhttprequest",
+            ),
+            (
+                "https://r1.googlevideo.com/videoplayback?source=youtube&slot=_ad_break",
+                "https://www.youtube.com/watch?v=video123",
+                "media",
+            ),
+            (
+                "https://ads.twitch.tv/adserver/ads",
+                "https://www.twitch.tv/directory",
+                "script",
+            ),
+            (
+                "https://www.twitch.tv/ads/get_ads",
+                "https://www.twitch.tv/directory",
+                "xmlhttprequest",
+            ),
+        ];
+        for (request_url, source_url, request_type) in blocked_requests {
+            assert!(
+                service
+                    .should_block(request_url, source_url, request_type, "GET")
+                    .expect("check streaming ad request"),
+                "expected streaming ad request to be blocked: {request_url}"
+            );
+        }
+
+        let allowed_requests = [
+            (
+                "https://r1.googlevideo.com/videoplayback?itag=140&dur=10",
+                "https://www.youtube.com/watch?v=video123",
+                "media",
+            ),
+            (
+                "https://www.youtube.com/youtubei/v1/player?videoId=video123",
+                "https://www.youtube.com/watch?v=video123",
+                "xmlhttprequest",
+            ),
+            (
+                "https://usher.ttvnw.net/api/channel/hls/channel.m3u8",
+                "https://www.twitch.tv/channel",
+                "other",
+            ),
+        ];
+        for (request_url, source_url, request_type) in allowed_requests {
+            assert!(
+                !service
+                    .should_block(request_url, source_url, request_type, "GET")
+                    .expect("check streaming content request"),
+                "expected streaming content request to remain allowed: {request_url}"
+            );
+        }
+
+        let cosmetics = service
+            .0
+            .engine
+            .read()
+            .expect("read ad blocker engine")
+            .url_cosmetic_resources("https://www.youtube.com/watch?v=video123");
+        assert!(cosmetics.hide_selectors.contains(".video-ads"));
+        assert!(cosmetics.hide_selectors.contains(".ytp-ad-module"));
+        assert!(cosmetics
+            .hide_selectors
+            .contains(".ytp-ad-overlay-container"));
+        assert!(cosmetics
+            .injected_script
+            .contains("ytInitialPlayerResponse"));
+        assert!(cosmetics
+            .injected_script
+            .contains("playerResponse.adPlacements"));
+    }
+
+    #[test]
     fn cosmetic_filters_are_available_from_the_engine() {
         let engine = build_engine("news.example.test##.ad-banner");
         let resources = engine.url_cosmetic_resources("https://news.example.test/article");
@@ -2923,12 +3035,19 @@ mod tests {
             .expect("compile and persist filter engine");
 
         assert!(compiled_engine_is_current(directory.path(), &config));
+        std::fs::write(
+            directory.path().join(BUILTIN_FILTERS_CACHE_FILE),
+            "outdated built-in rules",
+        )
+        .expect("simulate an engine compiled with old built-in rules");
+        assert!(!compiled_engine_is_current(directory.path(), &config));
         assert!(!compiled_engine_is_current(
             directory.path(),
             &CustomFilterConfig::default()
         ));
         let engine =
             load_cached_engine(directory.path(), &config).expect("load compiled filter engine");
+        assert!(compiled_engine_is_current(directory.path(), &config));
         for host in [
             "cached-ad.example.test",
             "custom-list.example.test",
@@ -2946,6 +3065,14 @@ mod tests {
                 "{host}"
             );
         }
+        let youtube_ad = Request::new(
+            "https://www.youtube.com/pagead/interaction/",
+            "https://www.youtube.com/watch?v=video123",
+            "other",
+            "GET",
+        )
+        .expect("construct YouTube ad request");
+        assert!(engine.check_network_request(&youtube_ad).should_block());
         let cosmetic = engine.url_cosmetic_resources("https://news.example.test/article");
         assert!(cosmetic.injected_script.contains("const target = 'foo';"));
     }

@@ -30,3 +30,7 @@ written by Gerald Reno (2019).
 The browser downloads the uBlock filters list from
 [`uBlockOrigin/uAssets`](https://github.com/uBlockOrigin/uAssets) at runtime. The list identifies
 its license in its header and is provided under GPL-3.0.
+
+The built-in YouTube streaming rules in `src-tauri/src/adblock/mod.rs` adapt a small subset of
+uBlock filters from [`uBlockOrigin/uAssets`](https://github.com/uBlockOrigin/uAssets), also
+licensed under GPL-3.0.

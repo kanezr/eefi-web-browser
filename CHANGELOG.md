@@ -4,15 +4,13 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.3] - 2026-11-28
+## [Unreleased]
 
 ### Added
 
-- Added Reader Mode for web articles, with adjustable text size and column
-  width, light/sepia/dark themes, and an in-page exit control.
-- Added live download byte progress with pause, resume, and cancel controls.
-- Added a persistent **Ask where to save each file** preference. Choosing a
-  location opens the Windows save dialog before the download starts.
+- Add best-effort built-in filters for known YouTube ad requests, player ad
+  metadata, and overlays, plus Twitch ad hosts and paths. These rules are
+  available before downloaded filter lists finish updating.
 
 ### Changed
 
@@ -22,6 +20,26 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 - Parallelize independent browser startup reads and coalesce redundant page
   webview resize updates.
 - Reduce lock hold time when recording blocked-request counts.
+
+### Fixed
+
+- Invalidate the compiled ad-block engine when built-in rules change, so
+  existing profiles rebuild stale cached rules after restart.
+
+### Known limitations
+
+- Ads stitched into the same media stream as the video may not be reliably
+  blocked.
+
+## [0.1.3] - 2026-11-28
+
+### Added
+
+- Added Reader Mode for web articles, with adjustable text size and column
+  width, light/sepia/dark themes, and an in-page exit control.
+- Added live download byte progress with pause, resume, and cancel controls.
+- Added a persistent **Ask where to save each file** preference. Choosing a
+  location opens the Windows save dialog before the download starts.
 
 ### Fixed
 
