@@ -4,7 +4,7 @@ use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -395,6 +395,10 @@ pub struct BrowserState(Arc<Mutex<BrowserData>>, Arc<BrowserContext>);
 struct BrowserContext {
     window_label: String,
     is_private: bool,
+    tab_lifecycle_lock: Mutex<()>,
+    session_save_pending: AtomicBool,
+    session_save_failed: AtomicBool,
+    session_save_lock: tokio::sync::Mutex<()>,
 }
 
 impl Default for BrowserState {
@@ -410,6 +414,10 @@ impl BrowserState {
             Arc::new(BrowserContext {
                 window_label,
                 is_private,
+                tab_lifecycle_lock: Mutex::new(()),
+                session_save_pending: AtomicBool::new(false),
+                session_save_failed: AtomicBool::new(false),
+                session_save_lock: tokio::sync::Mutex::new(()),
             }),
         )
     }
@@ -548,6 +556,14 @@ fn idle_tabs_past_timeout(data: &BrowserData, now: Instant, timeout: Duration) -
 }
 
 fn sleep_inactive_tabs(app: &AppHandle, state: &BrowserState, timeout: Duration) {
+    let _lifecycle_guard = match state.1.tab_lifecycle_lock.try_lock() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::WouldBlock) => return,
+        Err(std::sync::TryLockError::Poisoned(_)) => {
+            eprintln!("browser tab lifecycle lock poisoned while checking sleeping tabs");
+            return;
+        }
+    };
     let now = Instant::now();
     let candidates = match state.0.lock() {
         Ok(data) => idle_tabs_past_timeout(&data, now, timeout),
@@ -3658,6 +3674,11 @@ fn activate_tab_internal(
     privacy_service: &PrivacyService,
 ) -> Result<(), String> {
     validate_tab_id(tab_id)?;
+    let _lifecycle_guard = state
+        .1
+        .tab_lifecycle_lock
+        .lock()
+        .map_err(|_| "browser tab lifecycle lock is poisoned".to_string())?;
     let (should_wake, saved_tab) = {
         let data = state
             .0
@@ -3824,46 +3845,114 @@ fn queue_session_save(app: AppHandle, state: BrowserState) {
     if !state.persists_session() {
         return;
     }
-    let snapshot = match state.0.lock() {
-        Ok(data) => SessionSnapshot {
-            revision: data.revision,
-            tabs: data
-                .tabs
-                .iter()
-                .enumerate()
-                .map(|(position, tab)| SessionTab {
-                    id: tab.id.clone(),
-                    title: tab.title.clone(),
-                    url: tab.url.clone(),
-                    position,
-                    active: data.active_tab_id.as_deref() == Some(&tab.id),
-                    group_id: tab.group_id.clone(),
-                })
-                .collect(),
-            groups: data
-                .groups
-                .iter()
-                .map(|group| SessionGroup {
-                    id: group.id.clone(),
-                    name: group.name.clone(),
-                    color: group.color.clone(),
-                })
-                .collect(),
-        },
-        Err(_) => {
-            eprintln!("browser tab state lock poisoned while saving session");
+    if state
+        .1
+        .session_save_pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    state.1.session_save_failed.store(false, Ordering::Release);
+
+    let storage = app.state::<StorageService>().inner().clone();
+    let save_state = state.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        if !save_state.1.session_save_pending.load(Ordering::Acquire) {
             return;
         }
-    };
+        if let Err(error) = persist_pending_session_save(&save_state, &storage, false).await {
+            eprintln!("could not persist browser session: {error}");
+        }
+    });
+}
+
+pub async fn flush_session_on_exit(app: &AppHandle) -> Result<(), String> {
+    let state = app.state::<BrowserState>().inner().clone();
+    if !state.persists_session() {
+        return Ok(());
+    }
     let storage = app.state::<StorageService>().inner().clone();
-    tauri::async_runtime::spawn(async move {
+    persist_pending_session_save(&state, &storage, true).await
+}
+
+async fn persist_pending_session_save(
+    state: &BrowserState,
+    storage: &StorageService,
+    force: bool,
+) -> Result<(), String> {
+    let _save_guard = state.1.session_save_lock.lock().await;
+    let mut force = force;
+    loop {
+        if !force
+            && !state.1.session_save_pending.load(Ordering::Acquire)
+            && !state.1.session_save_failed.load(Ordering::Acquire)
+        {
+            return Ok(());
+        }
+        force = false;
+
+        let snapshot = match state.0.lock() {
+            Ok(data) => session_snapshot(&data),
+            Err(_) => {
+                state.1.session_save_pending.store(false, Ordering::Release);
+                state.1.session_save_failed.store(true, Ordering::Release);
+                return Err("browser tab state lock is poisoned while saving session".to_string());
+            }
+        };
+        let revision = snapshot.revision;
         if let Err(error) = storage
             .with_connection(move |connection| crate::storage::save_session(connection, snapshot))
             .await
         {
-            eprintln!("could not persist browser session: {error}");
+            state.1.session_save_pending.store(false, Ordering::Release);
+            state.1.session_save_failed.store(true, Ordering::Release);
+            return Err(error);
         }
-    });
+
+        let data = match state.0.lock() {
+            Ok(data) => data,
+            Err(_) => {
+                state.1.session_save_pending.store(false, Ordering::Release);
+                state.1.session_save_failed.store(true, Ordering::Release);
+                return Err("browser tab state lock is poisoned after saving session".to_string());
+            }
+        };
+        if data.revision == revision {
+            state.1.session_save_pending.store(false, Ordering::Release);
+            state.1.session_save_failed.store(false, Ordering::Release);
+            return Ok(());
+        }
+    }
+}
+
+fn session_snapshot(data: &BrowserData) -> SessionSnapshot {
+    SessionSnapshot {
+        revision: data.revision,
+        tabs: data
+            .tabs
+            .iter()
+            .enumerate()
+            .map(|(position, tab)| SessionTab {
+                id: tab.id.clone(),
+                title: tab.title.clone(),
+                url: tab.url.clone(),
+                position,
+                active: data.active_tab_id.as_deref() == Some(&tab.id),
+                group_id: tab.group_id.clone(),
+            })
+            .collect(),
+        groups: data
+            .groups
+            .iter()
+            .map(|group| SessionGroup {
+                id: group.id.clone(),
+                name: group.name.clone(),
+                color: group.color.clone(),
+            })
+            .collect(),
+    }
 }
 
 fn safe_session_url(value: &str) -> Result<Url, String> {
@@ -3952,10 +4041,10 @@ fn emit_download_changed(app: &AppHandle) {
 mod tests {
     use super::{
         assign_tab_to_group, idle_tabs_past_timeout, is_page_webview_label,
-        parse_tab_sleep_timeout, remember_closed_tab, remove_cancelled_download_file,
-        rollback_tab_metadata, update_tab_url, validate_find_query, validate_group_details,
-        validate_pdf_output_path, validate_tab_sleep_timeout, BrowserData, BrowserState, TabGroup,
-        TabInfo, TabSleepPolicy, MAX_CLOSED_TABS,
+        parse_tab_sleep_timeout, persist_pending_session_save, remember_closed_tab,
+        remove_cancelled_download_file, rollback_tab_metadata, update_tab_url, validate_find_query,
+        validate_group_details, validate_pdf_output_path, validate_tab_sleep_timeout, BrowserData,
+        BrowserState, TabGroup, TabInfo, TabSleepPolicy, MAX_CLOSED_TABS,
     };
     use std::{
         collections::{HashMap, HashSet},
@@ -3970,6 +4059,42 @@ mod tests {
             group_id: None,
             sleeping: false,
         }
+    }
+
+    #[test]
+    fn forced_session_flush_persists_snapshot_without_a_pending_debounce() {
+        let directory = tempfile::tempdir().expect("create temporary profile");
+        let storage = crate::storage::StorageService::new(directory.path().join("browser.sqlite3"));
+        let state = BrowserState::default();
+        {
+            let mut data = state.0.lock().expect("lock browser state");
+            let mut current_tab = tab("1");
+            current_tab.url = "https://example.test/".to_string();
+            data.tabs = vec![current_tab];
+            data.active_tab_id = Some("1".to_string());
+            data.revision = 1;
+        }
+
+        tauri::async_runtime::block_on(async {
+            persist_pending_session_save(&state, &storage, true)
+                .await
+                .expect("flush session snapshot");
+            let snapshot = storage
+                .with_connection(crate::storage::load_session)
+                .await
+                .expect("load flushed session");
+            assert_eq!(snapshot.tabs.len(), 1);
+            assert_eq!(snapshot.tabs[0].url, "https://example.test/");
+            assert!(snapshot.tabs[0].active);
+        });
+        assert!(!state
+            .1
+            .session_save_pending
+            .load(std::sync::atomic::Ordering::Acquire));
+        assert!(!state
+            .1
+            .session_save_failed
+            .load(std::sync::atomic::Ordering::Acquire));
     }
 
     #[test]

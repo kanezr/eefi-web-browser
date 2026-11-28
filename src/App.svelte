@@ -113,6 +113,8 @@
   let suggestionRequest = 0;
   let findTimer: number | undefined;
   let onekoSettingsRequest = 0;
+  let adblockStatusRequest = 0;
+  let bookmarkStatusRequest = 0;
 
   const activeTab = $derived(tabs.find((tab) => tab.id === activeTabId));
   const isSecure = $derived(activeTab?.url.startsWith("https://") ?? false);
@@ -147,6 +149,11 @@
     }
   }
 
+  function isCurrentPageUrl(url: string) {
+    const activeUrl = activeTab?.url ?? "";
+    return url === activeUrl || (url === "" && activeUrl === "about:blank");
+  }
+
   async function refreshTabGroups() {
     try {
       const [groups, currentTabs] = await Promise.all([
@@ -165,24 +172,34 @@
   }
 
   async function refreshAdblockStatus(url = activeTab?.url ?? "") {
+    if (!isCurrentPageUrl(url)) return;
     const host = hostForUrl(url);
+    const request = ++adblockStatusRequest;
+    const requestedTabId = activeTabId;
+    const requestedActiveUrl = activeTab?.url ?? "";
+    const isCurrentRequest = () =>
+      request === adblockStatusRequest &&
+      requestedTabId === activeTabId &&
+      requestedActiveUrl === (activeTab?.url ?? "");
     try {
       const status = await invoke<AdblockStatus>("adblock_status", { host });
+      if (!isCurrentRequest()) return;
       adblockEnabled = status.enabled;
       currentSiteAllowed = status.siteAllowed;
       blockedCount = status.blockedCount;
       filterListError = status.filterListError;
     } catch (error) {
-      showError(error);
+      if (isCurrentRequest()) showError(error);
     }
   }
 
   async function toggleAdblock() {
+    const request = ++adblockStatusRequest;
     try {
       await invoke("adblock_set_enabled", { enabled: !adblockEnabled });
-      adblockEnabled = !adblockEnabled;
+      if (request === adblockStatusRequest) await refreshAdblockStatus();
     } catch (error) {
-      showError(error);
+      if (request === adblockStatusRequest) showError(error);
     }
   }
 
@@ -229,15 +246,20 @@
   }
 
   async function toggleSiteAdblock() {
-    if (!activeHost) return;
+    const url = activeTab?.url ?? "";
+    const host = hostForUrl(url);
+    if (!host) return;
+    const request = ++adblockStatusRequest;
     try {
       await invoke("adblock_set_site_allowed", {
-        host: activeHost,
+        host,
         allowed: !currentSiteAllowed,
       });
-      await refreshAdblockStatus();
+      if (request === adblockStatusRequest && isCurrentPageUrl(url)) {
+        await refreshAdblockStatus(url);
+      }
     } catch (error) {
-      showError(error);
+      if (request === adblockStatusRequest) showError(error);
     }
   }
 
@@ -250,14 +272,25 @@
   }
 
   async function refreshBookmarkStatus(url = activeTab?.url ?? "") {
+    if (!isCurrentPageUrl(url)) return;
+    const request = ++bookmarkStatusRequest;
+    const requestedTabId = activeTabId;
+    const requestedActiveUrl = activeTab?.url ?? "";
+    const isCurrentRequest = () =>
+      request === bookmarkStatusRequest &&
+      requestedTabId === activeTabId &&
+      requestedActiveUrl === (activeTab?.url ?? "");
     if (!/^https?:\/\//i.test(url)) {
-      isBookmarked = false;
+      if (request === bookmarkStatusRequest) isBookmarked = false;
       return;
     }
     try {
-      isBookmarked = await invoke<boolean>("bookmark_is_saved", { url });
+      const bookmarked = await invoke<boolean>("bookmark_is_saved", { url });
+      if (isCurrentRequest()) {
+        isBookmarked = bookmarked;
+      }
     } catch (error) {
-      showError(error);
+      if (isCurrentRequest()) showError(error);
     }
   }
 
@@ -272,7 +305,11 @@
       homeTabIds = [...homeTabIds.filter((id) => id !== tab.id), tab.id];
       address = "";
       isLoading = false;
-      await refreshOnekoSettings("");
+      await Promise.all([
+        refreshAdblockStatus(""),
+        refreshBookmarkStatus(""),
+        refreshOnekoSettings(""),
+      ]);
       await resizeContent();
       focusAddress();
     } catch (error) {
@@ -297,6 +334,8 @@
       await invoke("set_page_content_visible", {
         visible: !managerView && !activeIsHome,
       });
+      await refreshAdblockStatus(address);
+      await refreshBookmarkStatus(address);
       await refreshOnekoSettings(address);
       await resizeContent();
     } catch (error) {
@@ -325,6 +364,7 @@
       isLoading = false;
       await refreshAdblockStatus(address);
       await refreshOnekoSettings(address);
+      await refreshBookmarkStatus(address);
       await resizeContent();
     } catch (error) {
       showError(error);
@@ -796,9 +836,11 @@
           if (payload.tabId === activeTabId) {
             address = payload.url === "about:blank" ? "" : payload.url;
             isLoading = payload.title !== "finished";
-            void refreshBookmarkStatus(payload.url);
-            void refreshAdblockStatus(payload.url);
-            void refreshOnekoSettings(payload.url);
+            if (payload.title === "finished") {
+              void refreshBookmarkStatus(payload.url);
+              void refreshAdblockStatus(payload.url);
+              void refreshOnekoSettings(payload.url);
+            }
           }
         });
         unlistenTitle = await listen<PageEvent>("browser:title", ({ payload }) => {
@@ -826,14 +868,13 @@
         unlistenUrlChanged = await listen<PageEvent>(
           "browser:url-changed",
           ({ payload }) => {
+            const previousUrl = tabs.find((tab) => tab.id === payload.tabId)?.url;
             tabs = tabs.map((tab) =>
               tab.id === payload.tabId ? { ...tab, url: payload.url } : tab,
             );
-            if (payload.tabId === activeTabId) {
+            if (payload.tabId === activeTabId && previousUrl !== payload.url) {
               address = payload.url;
               void refreshBookmarkStatus(payload.url);
-              void refreshAdblockStatus(payload.url);
-              void refreshOnekoSettings(payload.url);
             }
           },
         );

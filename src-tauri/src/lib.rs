@@ -210,9 +210,6 @@ pub fn run() {
                 .state::<privacy::PrivacyService>()
                 .inner()
                 .clone();
-            if privacy.preferences_loaded() && !privacy.clear_cookies_on_exit() {
-                return;
-            }
             api.prevent_exit();
             if exit_cleanup_started.swap(true, Ordering::AcqRel) {
                 return;
@@ -224,6 +221,16 @@ pub fn run() {
                 .clone();
             let cleanup_finished = exit_cleanup_finished.clone();
             tauri::async_runtime::spawn(async move {
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    tabs::flush_session_on_exit(&app_handle),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => eprintln!("could not flush browser session on exit: {error}"),
+                    Err(_) => eprintln!("timed out flushing browser session on exit"),
+                }
                 match privacy::ensure_preferences_loaded(&storage, &privacy).await {
                     Ok(()) if privacy.clear_cookies_on_exit() => {
                         match app_handle.get_webview("main") {

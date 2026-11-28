@@ -18,7 +18,7 @@ use adblock::{
     Engine, FilterSet,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use futures_util::StreamExt;
+use futures_util::{stream, StreamExt};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{State, Webview};
@@ -72,6 +72,7 @@ const THREAT_WARNING_HTML: &str = r#"<!doctype html><meta charset="utf-8"><title
 const MAX_FILTER_LIST_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REDIRECT_RESOURCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_CUSTOM_FILTER_CACHE_BYTES: usize = 16 * 1024 * 1024;
+const FILTER_LIST_FETCH_CONCURRENCY: usize = 4;
 const FILTER_UPDATE_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const FILTER_RETRY_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const GENERIC_COSMETIC_MESSAGE: &str = "eefi-generic-cosmetic-v1";
@@ -1331,39 +1332,81 @@ async fn refresh_filter_lists(
     })
     .await
     .map_err(|error| format!("filter cache worker failed: {error}"))??;
-    let mut default_update_failures = 0;
-    for (filename, url) in FILTER_LISTS {
-        match fetch_filter_list(client, url).await {
-            Ok(contents) => {
-                cached.insert(filename.to_string(), contents);
-            }
-            Err(error) => {
-                eprintln!("filter list update failed for {filename}: {error}");
-                default_update_failures += 1;
-            }
-        }
+
+    enum FilterListSource {
+        Builtin(&'static str),
+        Custom { index: usize, url: String },
     }
+
+    let mut sources = FILTER_LISTS
+        .iter()
+        .enumerate()
+        .map(|(order, (filename, url))| {
+            (
+                order,
+                FilterListSource::Builtin(*filename),
+                (*url).to_string(),
+            )
+        })
+        .collect::<Vec<_>>();
+    sources.extend(
+        custom_filter_config
+            .list_urls
+            .iter()
+            .enumerate()
+            .map(|(index, url)| {
+                (
+                    FILTER_LISTS.len() + index,
+                    FilterListSource::Custom {
+                        index,
+                        url: url.clone(),
+                    },
+                    url.clone(),
+                )
+            }),
+    );
+    let updates = stream::iter(sources.into_iter().map(|(order, source, url)| async move {
+        (order, source, fetch_filter_list(client, &url).await)
+    }))
+    .buffer_unordered(FILTER_LIST_FETCH_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await;
+
+    let mut default_update_failures = 0;
     custom_cached.retain(|url, _| custom_filter_config.list_urls.contains(url));
     let mut custom_update_failures = Vec::new();
-    for (index, url) in custom_filter_config.list_urls.iter().enumerate() {
-        match fetch_filter_list(client, url).await {
-            Ok(contents) => {
-                let updated_size = custom_cached
-                    .iter()
-                    .filter(|(cached_url, _)| *cached_url != url)
-                    .map(|(_, contents)| contents.len())
-                    .sum::<usize>()
-                    .saturating_add(contents.len());
-                if updated_size > MAX_CUSTOM_FILTER_CACHE_BYTES {
-                    eprintln!("custom filter cache limit exceeded; keeping previous cache");
-                } else {
-                    custom_cached.insert(url.clone(), contents);
+    let mut updates = updates;
+    updates.sort_by_key(|(order, _, _)| *order);
+    for (_, source, result) in updates {
+        match source {
+            FilterListSource::Builtin(filename) => match result {
+                Ok(contents) => {
+                    cached.insert(filename.to_string(), contents);
                 }
-            }
-            Err(error) => {
-                eprintln!("custom filter list {} update failed: {error}", index + 1);
-                custom_update_failures.push(url.clone());
-            }
+                Err(error) => {
+                    eprintln!("filter list update failed for {filename}: {error}");
+                    default_update_failures += 1;
+                }
+            },
+            FilterListSource::Custom { index, url } => match result {
+                Ok(contents) => {
+                    let updated_size = custom_cached
+                        .iter()
+                        .filter(|(cached_url, _)| *cached_url != &url)
+                        .map(|(_, contents)| contents.len())
+                        .sum::<usize>()
+                        .saturating_add(contents.len());
+                    if updated_size > MAX_CUSTOM_FILTER_CACHE_BYTES {
+                        eprintln!("custom filter cache limit exceeded; keeping previous cache");
+                    } else {
+                        custom_cached.insert(url, contents);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("custom filter list {} update failed: {error}", index + 1);
+                    custom_update_failures.push(url);
+                }
+            },
         }
     }
 

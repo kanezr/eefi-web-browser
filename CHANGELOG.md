@@ -20,9 +20,16 @@ Notable changes to Eefi Browser are documented here. This changelog follows
 - Parallelize independent browser startup reads and coalesce redundant page
   webview resize updates.
 - Reduce lock hold time when recording blocked-request counts.
+- Coalesce session persistence during bursts of page and title events, and
+  flush pending session changes on graceful application exit.
+- Refresh toolbar status once per completed page navigation.
+- Fetch built-in and custom ad-block lists concurrently with a bounded worker
+  count.
 
 ### Fixed
 
+- Ignore stale bookmark/ad-block status responses and serialize tab activation
+  with sleeping-tab transitions.
 - Invalidate the compiled ad-block engine when built-in rules change, so
   existing profiles rebuild stale cached rules after restart.
 - Reject invalid filter-list responses without replacing the last-known-good

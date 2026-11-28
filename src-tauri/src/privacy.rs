@@ -52,10 +52,6 @@ pub struct SitePermissionStatus {
 }
 
 impl PrivacyService {
-    pub(crate) fn preferences_loaded(&self) -> bool {
-        self.0.preferences_loaded.load(Ordering::Relaxed)
-    }
-
     fn https_only(&self) -> bool {
         self.0.https_only.load(Ordering::Relaxed)
     }
