@@ -1,10 +1,10 @@
 use eefi_browser_lib::{
     nav::{parse_input, ParsedInput},
     storage::{
-        add_bookmark, create_bookmark_folder, finish_download_for_request, get_setting,
-        insert_download, list_bookmarks, list_downloads, list_history, load_session,
-        record_history, recover_downloads, save_session, set_setting, update_latest_title,
-        SessionGroup, SessionSnapshot, SessionTab, StorageService,
+        add_bookmark, collect_omnibox_suggestions, create_bookmark_folder,
+        finish_download_for_request, get_setting, insert_download, list_bookmarks, list_downloads,
+        list_history, load_session, record_history, recover_downloads, save_session, set_setting,
+        update_latest_title, SessionGroup, SessionSnapshot, SessionTab, StorageService,
     },
 };
 use rusqlite::Connection;
@@ -75,6 +75,149 @@ fn navigation_intents_flow_into_persisted_bookmarks_and_history() {
             .as_deref(),
         Some("rust browser integration")
     );
+}
+
+#[test]
+fn omnibox_suggestions_merge_bookmarks_and_indexed_history() {
+    let profile = tempdir().expect("create temporary profile");
+    let storage = StorageService::new(profile.path().join("browser.sqlite3"));
+
+    with_profile(&storage, |connection| {
+        let bookmarked_url = "https://example.com/performance";
+        add_bookmark(
+            connection,
+            "Saved performance article",
+            bookmarked_url,
+            None,
+            true,
+        )?;
+        record_history(
+            connection,
+            bookmarked_url,
+            "Previously visited performance article",
+            1_700_000_000,
+        )?;
+        record_history(
+            connection,
+            "https://example.org/other",
+            "A different performance result",
+            1_700_000_001,
+        )?;
+
+        let suggestions = collect_omnibox_suggestions(connection, "formance")?;
+        assert_eq!(suggestions.len(), 2);
+        assert_eq!(suggestions[0].title, "Saved performance article");
+        assert_eq!(
+            suggestions
+                .iter()
+                .filter(|item| item.url == bookmarked_url)
+                .count(),
+            1
+        );
+        assert!(suggestions
+            .iter()
+            .any(|item| item.url == "https://example.org/other"));
+        assert!(collect_omnibox_suggestions(connection, "x")?.is_empty());
+        assert!(collect_omnibox_suggestions(connection, &"x".repeat(257)).is_err());
+
+        for index in 0..10 {
+            add_bookmark(
+                connection,
+                &format!("Performance bookmark {index:02}"),
+                &format!("https://bookmarks.example/{index}"),
+                None,
+                false,
+            )?;
+        }
+        let bounded = collect_omnibox_suggestions(connection, "performance")?;
+        assert_eq!(bounded.len(), 8);
+        Ok(())
+    })
+    .expect("collect combined omnibox suggestions");
+}
+
+#[test]
+fn shared_storage_service_reuses_connection_and_serializes_writes() {
+    let profile = tempdir().expect("create temporary profile");
+    let storage = StorageService::new(profile.path().join("browser.sqlite3"));
+
+    with_profile(&storage, |connection| {
+        connection
+            .execute_batch("CREATE TEMP TABLE connection_probe(value TEXT); INSERT INTO connection_probe VALUES ('reused');")
+            .map_err(|error| error.to_string())
+    })
+    .expect("create connection-local probe");
+    let probe: String = with_profile(&storage, |connection| {
+        connection
+            .query_row("SELECT value FROM connection_probe", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .map_err(|error| error.to_string())
+    })
+    .expect("read connection-local probe through subsequent operation");
+    assert_eq!(probe, "reused");
+
+    let tasks = (0..8)
+        .map(|index| {
+            let storage = storage.clone();
+            tauri::async_runtime::spawn(async move {
+                let url = format!("https://concurrent.example/{index}");
+                storage
+                    .with_connection(move |connection| {
+                        record_history(connection, &url, "Concurrent", 1_700_000_100 + index)
+                    })
+                    .await
+            })
+        })
+        .collect::<Vec<_>>();
+    tauri::async_runtime::block_on(async {
+        for task in tasks {
+            task.await
+                .expect("database operation task")
+                .expect("serialized database write");
+        }
+    });
+
+    let history = with_profile(&storage, |connection| list_history(connection, None, 100))
+        .expect("read concurrent history writes");
+    assert_eq!(history.len(), 8);
+}
+
+#[test]
+fn existing_history_is_reindexed_for_omnibox_search() {
+    let profile = tempdir().expect("create temporary profile");
+    let database = profile.path().join("browser.sqlite3");
+    let storage = StorageService::new(database.clone());
+    with_profile(&storage, |connection| {
+        record_history(
+            connection,
+            "https://example.com/reindexed",
+            "Existing history search phrase",
+            1_700_000_200,
+        )
+    })
+    .expect("record history before index rebuild");
+    drop(storage);
+
+    let legacy = Connection::open(&database).expect("open database without new search index");
+    legacy
+        .execute_batch(
+            "DROP TRIGGER history_search_insert;
+             DROP TRIGGER history_search_delete;
+             DROP TRIGGER history_search_update;
+             DROP TABLE history_search;
+             DROP TABLE browser_features;",
+        )
+        .expect("remove feature marker and index to simulate an older profile");
+    drop(legacy);
+
+    let upgraded = StorageService::new(database);
+    let suggestions = with_profile(&upgraded, |connection| {
+        collect_omnibox_suggestions(connection, "history search")
+    })
+    .expect("query indexed legacy history");
+    assert_eq!(suggestions.len(), 1);
+    assert_eq!(suggestions[0].title, "Existing history search phrase");
 }
 
 #[test]

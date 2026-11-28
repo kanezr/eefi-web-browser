@@ -29,6 +29,9 @@ jobs:
       - name: Test version normalization
         run: npm run test:version
 
+      - name: Test browser startup and resize scheduling
+        run: npm run test:browser-runtime
+
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 

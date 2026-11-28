@@ -7,6 +7,7 @@
   "scripts": {
     "sync-version": "node scripts/sync-version.mjs",
     "test:version": "node --test scripts/version.test.mjs",
+    "test:browser-runtime": "node --test scripts/browser-runtime.test.mjs",
     "predev": "npm run sync-version",
     "dev": "vite --host 127.0.0.1",
     "prebuild": "npm run sync-version",

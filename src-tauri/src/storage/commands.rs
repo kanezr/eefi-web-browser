@@ -6,14 +6,13 @@ use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use super::{
-    add_bookmark, create_bookmark_folder, delete_bookmark, delete_bookmark_folder,
-    delete_history_before, delete_history_for_site, finish_download_for_request, get_download,
-    get_setting, is_bookmarked, list_bookmark_folders, list_bookmarks, list_downloads,
-    list_history, recover_downloads, set_setting, suggest_bookmarks, suggest_history,
-    update_bookmark, Bookmark, BookmarkFolder, DownloadEntry, DownloadLocation, DownloadProgress,
-    DownloadRuntime, HistoryEntry, OmniboxSuggestion, StorageService,
+    add_bookmark, collect_omnibox_suggestions, create_bookmark_folder, delete_bookmark,
+    delete_bookmark_folder, delete_history_before, delete_history_for_site,
+    finish_download_for_request, get_download, get_setting, is_bookmarked, list_bookmark_folders,
+    list_bookmarks, list_downloads, list_history, recover_downloads, set_setting, update_bookmark,
+    Bookmark, BookmarkFolder, DownloadEntry, DownloadLocation, DownloadProgress, DownloadRuntime,
+    HistoryEntry, OmniboxSuggestion, StorageService,
 };
-use std::collections::HashSet;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,29 +151,8 @@ pub async fn omnibox_suggestions(
     query: String,
     storage: State<'_, StorageService>,
 ) -> Result<Vec<OmniboxSuggestion>, String> {
-    let query = query.trim().to_string();
-    if query.chars().count() > 256 {
-        return Err("Suggestion query is too long.".to_string());
-    }
-    if query.chars().count() < 2 {
-        return Ok(Vec::new());
-    }
     storage
-        .with_connection(move |connection| {
-            let saved = suggest_bookmarks(connection, &query, 8)?;
-            let visited = suggest_history(connection, &query, 8)?;
-            let mut seen = HashSet::new();
-            let mut suggestions = Vec::with_capacity(8);
-            for entry in saved.into_iter().chain(visited) {
-                if seen.insert(entry.url.clone()) {
-                    suggestions.push(entry);
-                    if suggestions.len() == 8 {
-                        break;
-                    }
-                }
-            }
-            Ok(suggestions)
-        })
+        .with_connection(move |connection| collect_omnibox_suggestions(connection, &query))
         .await
 }
 

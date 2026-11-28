@@ -13,6 +13,7 @@ pub use models::*;
 pub use sessions::*;
 
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
@@ -81,6 +82,34 @@ fn open_connection(path: &std::path::Path) -> Result<Connection, String> {
         .map_err(|_| "database migration lock is poisoned".to_string())?;
     migrate(&connection)?;
     Ok(connection)
+}
+
+pub fn collect_omnibox_suggestions(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<OmniboxSuggestion>, String> {
+    let query = query.trim();
+    let query_length = query.chars().count();
+    if query_length > 256 {
+        return Err("Suggestion query is too long.".to_string());
+    }
+    if query_length < 2 {
+        return Ok(Vec::new());
+    }
+
+    let saved = suggest_bookmarks(connection, query, 8)?;
+    let visited = suggest_history(connection, query, 8)?;
+    let mut seen = HashSet::new();
+    let mut suggestions = Vec::with_capacity(8);
+    for entry in saved.into_iter().chain(visited) {
+        if seen.insert(entry.url.clone()) {
+            suggestions.push(entry);
+            if suggestions.len() == 8 {
+                break;
+            }
+        }
+    }
+    Ok(suggestions)
 }
 
 fn migrate(connection: &Connection) -> Result<(), String> {
@@ -369,6 +398,12 @@ mod tests {
             suggest_history(&connection, "formance gu", 8).expect("search within title");
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].title, "Browser performance guide");
+        assert_eq!(
+            suggest_history(&connection, "for", 8)
+                .expect("search short query")
+                .len(),
+            1
+        );
 
         update_latest_title(
             &connection,

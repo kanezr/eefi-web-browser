@@ -4,6 +4,7 @@
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { ask, save } from "@tauri-apps/plugin-dialog";
+  import { createResizeScheduler, loadBrowserBootstrap } from "./browser-runtime.mjs";
   import Home from "./Home.svelte";
   import Library from "./Library.svelte";
 
@@ -81,11 +82,6 @@
   let addressInput: HTMLInputElement;
   let findInput = $state<HTMLInputElement>();
   let contentArea: HTMLDivElement;
-  let resizeFrame: number | undefined;
-  let resizeInFlight = false;
-  let resizePending = false;
-  let lastResizedTabId = "";
-  let lastContentBounds: { x: number; y: number; width: number; height: number } | undefined;
   let dragTabId = "";
   let isLoading = $state(false);
   let message = $state("");
@@ -121,6 +117,21 @@
       !activeTab?.sleeping &&
       /^https?:\/\//i.test(activeTab?.url ?? ""),
   );
+  const resizeScheduler = createResizeScheduler({
+    requestFrame: (callback) => window.requestAnimationFrame(callback),
+    cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+    getBounds: () => {
+      if (!contentArea) return null;
+      const rect = contentArea.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    },
+    getActiveTabId: () => activeTabId,
+    resize: (bounds) => invoke("resize_active_view", bounds),
+    onError: (error) => {
+      // The view can briefly be absent while the last tab is closing.
+      if (activeTabId) showError(error);
+    },
+  });
 
   function hostForUrl(url: string) {
     try {
@@ -688,53 +699,12 @@
     }
   }
 
-  async function resizeContent() {
-    if (!contentArea) return;
-    if (resizeInFlight) {
-      resizePending = true;
-      return;
-    }
-    resizeInFlight = true;
-    try {
-      do {
-        resizePending = false;
-        const rect = contentArea.getBoundingClientRect();
-        const bounds = {
-          x: rect.x,
-          y: rect.y,
-          width: rect.width,
-          height: rect.height,
-        };
-        if (
-          lastContentBounds &&
-          lastResizedTabId === activeTabId &&
-          lastContentBounds.x === bounds.x &&
-          lastContentBounds.y === bounds.y &&
-          lastContentBounds.width === bounds.width &&
-          lastContentBounds.height === bounds.height
-        ) {
-          continue;
-        }
-        try {
-          await invoke("resize_active_view", bounds);
-          lastContentBounds = bounds;
-          lastResizedTabId = activeTabId;
-        } catch (error) {
-          // The view can briefly be absent while the last tab is closing.
-          if (activeTabId) showError(error);
-        }
-      } while (resizePending);
-    } finally {
-      resizeInFlight = false;
-    }
+  function resizeContent() {
+    return resizeScheduler.flush();
   }
 
   function scheduleResizeContent() {
-    if (resizeFrame !== undefined) return;
-    resizeFrame = requestAnimationFrame(() => {
-      resizeFrame = undefined;
-      void resizeContent();
-    });
+    resizeScheduler.schedule();
   }
 
   function focusAddress() {
@@ -836,7 +806,7 @@
               tab.id === payload.tabId ? { ...tab, sleeping: payload.sleeping } : tab,
             );
             if (!payload.sleeping && payload.tabId === activeTabId) {
-              lastResizedTabId = "";
+              resizeScheduler.invalidate();
               scheduleResizeContent();
             }
           },
@@ -920,23 +890,11 @@
           unlistenOneko();
           return;
         }
-        const [windowMode] = await Promise.all([
-          invoke<boolean>("browser_window_mode"),
-          invoke<string>("download_directory"),
-          invoke<boolean>("download_ask_where_to_save"),
-        ]);
-        privateMode = windowMode;
-        const [restoredTabs] = await Promise.all([
-          invoke<Tab[]>("restore_session"),
-          privateMode ? Promise.resolve() : invoke("downloads_recover"),
-        ]);
-        tabs = restoredTabs;
-        const [groups, restoredActiveTabId] = await Promise.all([
-          invoke<TabGroup[]>("tab_groups_list"),
-          invoke<string | null>("active_tab_id"),
-        ]);
-        tabGroups = groups;
-        activeTabId = restoredActiveTabId ?? tabs[0]?.id ?? "";
+        const bootstrap = await loadBrowserBootstrap(invoke);
+        privateMode = bootstrap.privateMode;
+        tabs = bootstrap.tabs;
+        tabGroups = bootstrap.groups;
+        activeTabId = bootstrap.activeTabId ?? tabs[0]?.id ?? "";
         if (activeTab?.url === "about:blank") {
           homeTabIds = [activeTab.id];
           await invoke("set_page_content_visible", { visible: false });
@@ -1034,7 +992,7 @@
       observer?.disconnect();
       window.removeEventListener("keydown", onKeydown);
       if (findTimer !== undefined) window.clearTimeout(findTimer);
-      if (resizeFrame !== undefined) cancelAnimationFrame(resizeFrame);
+      resizeScheduler.cancel();
     };
   });
 </script>
